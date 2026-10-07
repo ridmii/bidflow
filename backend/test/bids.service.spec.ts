@@ -1,0 +1,235 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { BidsService } from '../src/bids/bids.service';
+
+// Unit tests for bid validation logic, using mocks
+describe('BidsService - Bid Validation Logic', () => {
+  let bidsService: BidsService;
+  let mockBidsRepo: any;
+  let mockAutoBidsRepo: any;
+  let mockAuctionsRepo: any;
+  let mockDataSource: any;
+  let mockAuditService: any;
+  let mockGateway: any;
+
+  const makeMockAuction = (overrides = {}) => ({
+    id: 'auction-1',
+    status: 'LIVE',
+    currentPrice: 25000,
+    endTime: new Date(Date.now() + 3600000), // 1 hour from now
+    startTime: new Date(Date.now() - 3600000),
+    antiSnipingDuration: 120,
+    extensionDuration: 120,
+    maxExtensions: 3,
+    extensionCount: 0,
+    leadingBidderId: null,
+    leadingBidderName: null,
+    ...overrides,
+  });
+
+  const makeMockUser = (id = 'user-1') => ({
+    id,
+    name: 'Test User',
+    email: 'test@test.com',
+    role: 'bidder',
+  });
+
+  beforeEach(() => {
+    mockBidsRepo = {
+      findOne: vi.fn(),
+      create: vi.fn((data) => data),
+      save: vi.fn((data) => data),
+    };
+    mockAutoBidsRepo = { find: vi.fn(() => []) };
+    mockAuctionsRepo = { findOne: vi.fn() };
+    mockAuditService = { log: vi.fn() };
+    mockGateway = {
+      emitBidPlaced: vi.fn(),
+      emitAuctionExtended: vi.fn(),
+    };
+
+    // Mock dataSource transaction
+    mockDataSource = {
+      transaction: vi.fn((cb) => {
+        const manager = {
+          findOne: vi.fn(),
+          create: vi.fn((Entity, data) => data),
+          save: vi.fn((data) => ({ ...data, placedAt: new Date() })),
+          find: vi.fn(() => []),
+          createQueryBuilder: vi.fn(() => ({
+            where: vi.fn().mockReturnThis(),
+            orderBy: vi.fn().mockReturnThis(),
+            addOrderBy: vi.fn().mockReturnThis(),
+            getOne: vi.fn(() => null),
+          })),
+        };
+        return cb(manager);
+      }),
+    };
+
+    bidsService = new BidsService(
+      mockBidsRepo,
+      mockAutoBidsRepo,
+      mockAuctionsRepo,
+      mockDataSource,
+      mockAuditService,
+      mockGateway,
+    );
+  });
+
+  describe('Minimum increment validation', () => {
+    it('rejects a bid below minimum increment', async () => {
+      const auction = makeMockAuction({ currentPrice: 25000 });
+      // Minimum next bid should be 25000 + 500 = 25500
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+          create: vi.fn((Entity, data) => data),
+          save: vi.fn((data) => data),
+        };
+        return cb(manager);
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser() as any, {
+          amount: 25100, // Below minimum
+        }),
+      ).rejects.toThrow(/least/i);
+    });
+
+    it('accepts a bid at exact minimum increment', async () => {
+      const auction = makeMockAuction({ currentPrice: 25000 });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+          create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
+          save: vi.fn((data) => ({ ...data, placedAt: new Date() })),
+          find: vi.fn(() => []),
+        };
+        return cb(manager);
+      });
+
+      const result = await bidsService.placeBid(
+        'auction-1',
+        makeMockUser() as any,
+        { amount: 25500 }, // Exact minimum
+      );
+      expect(result.amount).toBe(25500);
+    });
+  });
+
+  describe('Auction status validation', () => {
+    it('rejects bid on non-live auction', async () => {
+      const auction = makeMockAuction({ status: 'DRAFT' });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+        };
+        return cb(manager);
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser() as any, {
+          amount: 25500,
+        }),
+      ).rejects.toThrow(/not live/i);
+    });
+
+    it('rejects bid on ended auction', async () => {
+      const auction = makeMockAuction({
+        endTime: new Date(Date.now() - 1000), // Past
+      });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+        };
+        return cb(manager);
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser() as any, {
+          amount: 25500,
+        }),
+      ).rejects.toThrow(/ended/i);
+    });
+  });
+
+  describe('Idempotency', () => {
+    it('rejects duplicate bid with same idempotencyKey', async () => {
+      mockBidsRepo.findOne = vi.fn().mockResolvedValue({
+        id: 'existing-bid',
+        idempotencyKey: 'key-123',
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser() as any, {
+          amount: 25500,
+          idempotencyKey: 'key-123',
+        }),
+      ).rejects.toThrow(/duplicate/i);
+    });
+  });
+
+  describe('Anti-sniping', () => {
+    it('extends auction when bid is within anti-sniping window', async () => {
+      const auction = makeMockAuction({
+        currentPrice: 25000,
+        endTime: new Date(Date.now() + 60000), // 60 seconds remaining (< 120s threshold)
+        extensionCount: 0,
+        maxExtensions: 3,
+        extensionDuration: 120,
+        antiSnipingDuration: 120,
+      });
+
+      let savedAuction: any;
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+          create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
+          save: vi.fn((data) => {
+            savedAuction = data;
+            return { ...data, placedAt: new Date() };
+          }),
+          find: vi.fn(() => []),
+        };
+        return cb(manager);
+      });
+
+      await bidsService.placeBid('auction-1', makeMockUser() as any, {
+        amount: 25500,
+      });
+
+      console.log("EXT_COUNT:", savedAuction.extensionCount); expect(savedAuction.extensionCount).toBe(1);
+      await new Promise(resolve => process.nextTick(resolve)); expect(mockGateway.emitAuctionExtended).toHaveBeenCalled();
+    });
+
+    it('does not extend when max extensions reached', async () => {
+      const auction = makeMockAuction({
+        currentPrice: 25000,
+        endTime: new Date(Date.now() + 60000),
+        extensionCount: 3, // At max
+        maxExtensions: 3,
+      });
+
+      let savedAuction: any;
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+          create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
+          save: vi.fn((data) => {
+            savedAuction = data;
+            return { ...data, placedAt: new Date() };
+          }),
+          find: vi.fn(() => []),
+        };
+        return cb(manager);
+      });
+
+      await bidsService.placeBid('auction-1', makeMockUser() as any, {
+        amount: 25500,
+      });
+
+      expect(savedAuction.extensionCount).toBe(3); // Unchanged
+      expect(mockGateway.emitAuctionExtended).not.toHaveBeenCalled();
+    });
+  });
+});
