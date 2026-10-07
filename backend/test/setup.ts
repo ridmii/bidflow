@@ -9,12 +9,17 @@ beforeAll(async () => {
   if (process.env.NODE_ENV !== 'test') {
     throw new Error('NODE_ENV must be test');
   }
+  const dbName = process.env.DB_NAME || 'auction_test_db';
+  if (!dbName.includes('test')) {
+    throw new Error('Safety Check: Test environment MUST use a test database');
+  }
+
   client = new Client({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432'),
     user: process.env.DB_USERNAME || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
-    database: process.env.DB_NAME || 'auction_test_db',
+    database: dbName,
   });
   await client.connect();
 });
