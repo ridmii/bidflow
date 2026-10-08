@@ -169,6 +169,52 @@ describe('BidsService - Bid Validation Logic', () => {
     });
   });
 
+  describe('Transaction Rollback', () => {
+    it('does not emit any events if the transaction throws', async () => {
+      const auction = makeMockAuction({ currentPrice: 25000 });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+          create: vi.fn((Entity, data) => data),
+          save: vi.fn(() => {
+            throw new Error('Database connection lost');
+          }),
+        };
+        return cb(manager);
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser() as any, {
+          amount: 25500,
+        }),
+      ).rejects.toThrow('Database connection lost');
+
+      expect(mockGateway.emitBidPlaced).not.toHaveBeenCalled();
+      expect(mockGateway.emitAuctionExtended).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 ConflictException on lock timeout/deadlock with no events emitted', async () => {
+      const auction = makeMockAuction({ currentPrice: 25000 });
+      let attempts = 0;
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        attempts++;
+        const err = new Error('Lock timeout');
+        (err as any).code = '55P03';
+        throw err;
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser() as any, {
+          amount: 25500,
+        }),
+      ).rejects.toThrow(/high traffic/i);
+
+      expect(attempts).toBe(3); // Initial + 2 retries
+      expect(mockGateway.emitBidPlaced).not.toHaveBeenCalled();
+      expect(mockGateway.emitAuctionExtended).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Anti-sniping', () => {
     it('extends auction when bid is within anti-sniping window', async () => {
       const auction = makeMockAuction({
@@ -198,8 +244,8 @@ describe('BidsService - Bid Validation Logic', () => {
         amount: 25500,
       });
 
-      console.log("EXT_COUNT:", savedAuction.extensionCount); expect(savedAuction.extensionCount).toBe(1);
-      await new Promise(resolve => process.nextTick(resolve)); expect(mockGateway.emitAuctionExtended).toHaveBeenCalled();
+      expect(savedAuction.extensionCount).toBe(1);
+      expect(mockGateway.emitAuctionExtended).toHaveBeenCalled();
     });
 
     it('does not extend when max extensions reached', async () => {

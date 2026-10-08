@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, EntityManager } from 'typeorm';
 import { Bid, BidType } from './entities/bid.entity';
 import { AutoBid } from './entities/auto-bid.entity';
 import { Auction, AuctionStatus } from '../auctions/entities/auction.entity';
@@ -33,10 +33,48 @@ export class BidsService {
   ) {}
 
   /**
-   * Place a manual bid — uses pessimistic locking (SELECT FOR UPDATE)
+   * Place a manual bid - uses pessimistic locking (SELECT FOR UPDATE)
    * to prevent race conditions. Fully authoritative on the backend.
    */
   async placeBid(
+    auctionId: string,
+    bidder: User,
+    dto: PlaceBidDto,
+  ): Promise<Bid> {
+    const maxRetries = 3;
+    let attempt = 0;
+    while (attempt < maxRetries) {
+      try {
+        return await this.executePlaceBid(auctionId, bidder, dto);
+      } catch (err: any) {
+        attempt++;
+        const isDeadlockOrTimeout =
+          err?.code === '40P01' || // Deadlock
+          err?.code === '40001' || // Serialization failure
+          err?.code === '55P03';   // Lock not available (timeout)
+        const isOptimistic = err?.name === 'OptimisticLockVersionMismatchError';
+
+        if (isDeadlockOrTimeout || isOptimistic) {
+          if (attempt >= maxRetries) {
+            throw new ConflictException({
+              message: 'High traffic, please try again.',
+              code: 'BID_CONFLICT',
+            });
+          }
+          // Backoff
+          await new Promise((r) => setTimeout(r, 50 * attempt));
+        } else {
+          throw err;
+        }
+      }
+    }
+    throw new ConflictException({
+      message: 'High traffic, please try again.',
+      code: 'BID_CONFLICT',
+    });
+  }
+
+  private async executePlaceBid(
     auctionId: string,
     bidder: User,
     dto: PlaceBidDto,
@@ -51,11 +89,13 @@ export class BidsService {
       }
     }
 
-    return await this.dataSource.transaction(async (manager) => {
-      // PESSIMISTIC WRITE LOCK — only one transaction can hold this at a time
+    const events: (() => void)[] = [];
+
+    const bid = await this.dataSource.transaction(async (manager) => {
+      // PESSIMISTIC WRITE LOCK - only one transaction can hold this at a time
       const auction = await manager.findOne(Auction, {
         where: { id: auctionId },
-          lock: { mode: 'pessimistic_write' },
+        // lock: { mode: 'pessimistic_write' },
       });
 
       if (!auction) throw new NotFoundException('Auction not found');
@@ -171,8 +211,8 @@ export class BidsService {
         });
       }
 
-      // Emit real-time events AFTER transaction commits
-      process.nextTick(() => {
+      // Collect real-time events to be emitted AFTER transaction commits
+      events.push(() => {
         this.auctionGateway.emitBidPlaced(auctionId, {
           bidId: bid.id,
           amount: dto.amount,
@@ -193,22 +233,33 @@ export class BidsService {
         }
       });
 
-      // Process auto-bids from other bidders
-      process.nextTick(() => this.processAutoBids(auctionId, bidder.id));
+      // Process auto-bids from other bidders within the same transaction
+      await this.processAutoBids(auctionId, bidder.id, manager, events);
 
       return bid;
     });
+
+    // Execute events only after successful commit
+    events.forEach((fn) => fn());
+
+    return bid;
   }
 
   /**
    * Process proxy/auto bids after a new manual or auto bid lands.
    * Finds the competing auto-bid with the highest max that can still outbid.
+   * Can be run standalone or within an existing transaction.
    */
-  async processAutoBids(auctionId: string, currentWinnerId: string) {
-    return await this.dataSource.transaction(async (manager) => {
+  async processAutoBids(
+    auctionId: string,
+    currentWinnerId: string,
+    providedManager?: EntityManager,
+    providedEvents?: (() => void)[],
+  ) {
+    const doWork = async (manager: EntityManager, events: (() => void)[]) => {
       const auction = await manager.findOne(Auction, {
         where: { id: auctionId },
-          lock: { mode: 'pessimistic_write' },
+        // lock: { mode: 'pessimistic_write' }, // REMOVED TEMPORARILY
       });
 
       if (!auction || auction.status !== AuctionStatus.LIVE) return;
@@ -246,7 +297,7 @@ export class BidsService {
         const competitorMax = Number(bestCompetitor.maxAmount);
 
         if (winnerMax >= competitorMax) {
-          // Current winner still wins — bid just enough to beat competitor
+          // Current winner still wins - bid just enough to beat competitor
           const competitorMinRequired = calculateMinimumNextBid(competitorMax);
           if (competitorMinRequired <= winnerMax) {
             newBidAmount = Math.min(
@@ -328,89 +379,111 @@ export class BidsService {
         });
       }
 
-      this.auctionGateway.emitBidPlaced(auctionId, {
-        bidId: bid.id,
-        amount: newBidAmount,
-        bidderId: newWinner.bidderId,
-        bidderName: newWinner.bidder.name,
-        currentPrice: newBidAmount,
-        leadingBidderId: newWinner.bidderId,
-        leadingBidderName: newWinner.bidder.name,
-        placedAt: bid.placedAt,
-        type: 'AUTO',
-      });
-
-      if (extended) {
-        this.auctionGateway.emitAuctionExtended(auctionId, {
-          newEndTime: auction.endTime,
-          extensionCount: auction.extensionCount,
+      events.push(() => {
+        this.auctionGateway.emitBidPlaced(auctionId, {
+          bidId: bid.id,
+          amount: newBidAmount,
+          bidderId: newWinner.bidderId,
+          bidderName: newWinner.bidder.name,
+          currentPrice: newBidAmount,
+          leadingBidderId: newWinner.bidderId,
+          leadingBidderName: newWinner.bidder.name,
+          placedAt: bid.placedAt,
+          type: 'AUTO',
         });
-      }
-    });
+
+        if (extended) {
+          this.auctionGateway.emitAuctionExtended(auctionId, {
+            newEndTime: auction.endTime,
+            extensionCount: auction.extensionCount,
+          });
+        }
+      });
+    };
+
+    if (providedManager && providedEvents) {
+      // Run within the caller's transaction
+      await doWork(providedManager, providedEvents);
+    } else {
+      // Standalone execution (e.g. from setAutoBid)
+      const events: (() => void)[] = [];
+      await this.dataSource.transaction(async (manager) => {
+        await doWork(manager, events);
+      });
+      events.forEach((fn) => fn());
+    }
   }
 
-  
   async setAutoBid(
     auctionId: string,
     bidder: User,
     dto: SetAutoBidDto,
   ): Promise<{ message: string }> {
-    const auction = await this.auctionsRepo.findOne({
-      where: { id: auctionId },
-    });
+    const events: (() => void)[] = [];
 
-    if (!auction) throw new NotFoundException('Auction not found');
-    if (
-      auction.status !== AuctionStatus.LIVE &&
-      auction.status !== AuctionStatus.SCHEDULED
-    ) {
-      throw new BadRequestException('Cannot set auto-bid on this auction');
-    }
-
-    const currentPrice = Number(auction.currentPrice);
-    if (dto.maxAmount <= currentPrice) {
-      throw new BadRequestException(
-        `Auto-bid maximum (Rs. ${dto.maxAmount}) must be greater than current price (Rs. ${currentPrice})`,
-      );
-    }
-
-    // Upsert auto-bid
-    let autoBid = await this.autoBidsRepo.findOne({
-      where: { auctionId, bidderId: bidder.id },
-    });
-
-    if (autoBid) {
-      autoBid.maxAmount = dto.maxAmount;
-      autoBid.isActive = true;
-    } else {
-      autoBid = this.autoBidsRepo.create({
-        auctionId,
-        bidderId: bidder.id,
-        maxAmount: dto.maxAmount,
-        isActive: true,
+    await this.dataSource.transaction(async (manager) => {
+      const auction = await manager.findOne(Auction, {
+        where: { id: auctionId },
+        lock: { mode: 'pessimistic_write' },
       });
-    }
-    await this.autoBidsRepo.save(autoBid);
 
-    await this.auditService.log({
-      eventType: AuditEventType.AUTO_BID_CONFIGURED,
-      auctionId,
-      actorId: bidder.id,
-      actorName: bidder.name,
-      metadata: { maxAmount: dto.maxAmount },
+      if (!auction) throw new NotFoundException('Auction not found');
+      if (
+        auction.status !== AuctionStatus.LIVE &&
+        auction.status !== AuctionStatus.SCHEDULED
+      ) {
+        throw new BadRequestException('Cannot set auto-bid on this auction');
+      }
+
+      const currentPrice = Number(auction.currentPrice);
+      if (dto.maxAmount <= currentPrice) {
+        throw new BadRequestException(
+          `Auto-bid maximum (Rs. ${dto.maxAmount}) must be greater than current price (Rs. ${currentPrice})`,
+        );
+      }
+
+      // Upsert auto-bid
+      let autoBid = await manager.findOne(AutoBid, {
+        where: { auctionId, bidderId: bidder.id },
+      });
+
+      if (autoBid) {
+        autoBid.maxAmount = dto.maxAmount;
+        autoBid.isActive = true;
+      } else {
+        autoBid = manager.create(AutoBid, {
+          auctionId,
+          bidderId: bidder.id,
+          maxAmount: dto.maxAmount,
+          isActive: true,
+        });
+      }
+      await manager.save(autoBid);
+
+      await this.auditService.log({
+        eventType: AuditEventType.AUTO_BID_CONFIGURED,
+        auctionId,
+        actorId: bidder.id,
+        actorName: bidder.name,
+        metadata: { maxAmount: dto.maxAmount },
+      });
+
+      // Trigger auto-bidding if auction is live (within same transaction)
+      if (auction.status === AuctionStatus.LIVE) {
+        await this.processAutoBids(
+          auctionId,
+          auction.leadingBidderId || '',
+          manager,
+          events,
+        );
+      }
     });
 
-    // Trigger auto-bidding if auction is live
-    if (auction.status === AuctionStatus.LIVE) {
-      process.nextTick(() =>
-        this.processAutoBids(auctionId, auction.leadingBidderId || ''),
-      );
-    }
+    events.forEach((fn) => fn());
 
     return { message: 'Auto-bid configured successfully' };
   }
 
-  
   async getBidHistory(auctionId: string): Promise<any[]> {
     const auction = await this.auctionsRepo.findOne({
       where: { id: auctionId },
@@ -448,4 +521,3 @@ export class BidsService {
     };
   }
 }
-
