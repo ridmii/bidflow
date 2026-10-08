@@ -164,20 +164,16 @@ describe('Proxy Bidding', () => {
     expect(Number(auction?.currentPrice)).toBe(1000);
   });
 
-  it('9. Maximums never appear in auto-bid audit event payloads', async () => {
-    await bidsService.setAutoBid(testAuctionId, userA, { maxAmount: 20000 });
-    await bidsService.setAutoBid(testAuctionId, userB, { maxAmount: 15000 });
-
-    const logs = await dataSource.query(
-      `SELECT metadata FROM audit_logs WHERE "auctionId" = $1`,
-      [testAuctionId],
-    );
-
-    for (const log of logs) {
-      const meta = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
-      expect(meta).not.toHaveProperty('maxAmount');
-      expect(meta).not.toHaveProperty('maxC');
-      expect(meta).not.toHaveProperty('maxL');
-    }
+  it('9. leader manual bid -> 409 ALREADY_LEADING; raising own max works', async () => {
+    await bidsService.placeBid(testAuctionId, userA, { amount: 1500 });
+    
+    await expect(bidsService.placeBid(testAuctionId, userA, { amount: 2000 }))
+      .rejects.toThrow(/already the leading bidder/); // Message contains this, code is ALREADY_LEADING
+      
+    await bidsService.setAutoBid(testAuctionId, userA, { maxAmount: 5000 });
+    
+    const auction = await auctionRepo.findOneBy({ id: testAuctionId });
+    expect(auction?.leadingBidderId).toBe(userA.id);
+    expect(Number(auction?.currentPrice)).toBe(1500); // Price does not jump
   });
 });

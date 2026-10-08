@@ -153,14 +153,14 @@ export class BidsService {
         );
       }
 
-      if (auction.leadingBidderId === bidder.id) {
+      const previousLeader = auction.leadingBidderId;
+
+      if (previousLeader === bidder.id) {
         throw new ConflictException({
-          message: 'You are already the highest bidder. If you want to increase your maximum, use the auto-bid feature instead.',
+          message: 'You are already the leading bidder',
           code: 'ALREADY_LEADING',
         });
       }
-
-      const previousLeader = auction.leadingBidderId;
 
       // Create bid record
       const bid = manager.create(Bid, {
@@ -171,10 +171,9 @@ export class BidsService {
         bidderName: bidder.name,
         idempotencyKey: dto.idempotencyKey,
       });
-            await manager.save(bid);
+      await manager.save(bid);
       
       // Update auction state
-      const wasLeaderChanged = previousLeader !== bidder.id;
       auction.currentPrice = dto.amount;
       auction.leadingBidderId = bidder.id;
       auction.leadingBidderName = bidder.name;
@@ -207,26 +206,16 @@ export class BidsService {
         }, manager);
       }
 
-            await manager.save(auction);
+      await manager.save(auction);
       
       // Audit logs
-            await this.auditService.log({
+      await this.auditService.log({
         eventType: AuditEventType.BID_PLACED,
         auctionId,
         actorId: bidder.id,
         actorName: bidder.name,
         metadata: { amount: dto.amount, type: 'MANUAL' },
       }, manager);
-
-      if (wasLeaderChanged && previousLeader) {
-                await this.auditService.log({
-          eventType: AuditEventType.LEADER_CHANGED,
-          auctionId,
-          actorId: bidder.id,
-          actorName: bidder.name,
-          metadata: { previousLeader, newLeader: bidder.id },
-        }, manager);
-      }
 
       // Collect real-time events to be emitted AFTER transaction commits
       events.push(() => {
@@ -250,8 +239,19 @@ export class BidsService {
         }
       });
 
-            // Process auto-bids from other bidders within the same transaction
-      await this.processAutoBids(auctionId, bidder.id, manager, events);
+      // Process auto-bids from ALL active auto-bids within the same transaction
+      await this.processAutoBids(auctionId, manager, events);
+      
+      const finalAuction = await manager.findOne(Auction, { where: { id: auctionId } });
+      if (previousLeader && finalAuction && finalAuction.leadingBidderId !== previousLeader) {
+        await this.auditService.log({
+          eventType: AuditEventType.LEADER_CHANGED,
+          auctionId,
+          actorId: finalAuction.leadingBidderId,
+          actorName: finalAuction.leadingBidderName,
+          metadata: { previousLeader, newLeader: finalAuction.leadingBidderId },
+        }, manager);
+      }
       
       return bid;
     });
@@ -269,7 +269,6 @@ export class BidsService {
    */
   async processAutoBids(
     auctionId: string,
-    currentWinnerId: string,
     providedManager?: EntityManager,
     providedEvents?: (() => void)[],
   ) {
@@ -286,145 +285,185 @@ export class BidsService {
         relations: { bidder: true },
       });
 
-      interface Competitor {
-        bidderId: string;
-        bidderName: string;
-        maxAmount: number;
-        createdAt: number;
-        isAuto: boolean;
+      // Build a map of maxes
+      const bidderMaxes = new Map<string, { userId: string, name: string, maxAmount: number, time: number }>();
+      
+      // Add current leader if they exist
+      if (auction.leadingBidderId) {
+        let leaderTime = Date.now();
+        const lastBid = await manager.findOne(Bid, {
+          where: { auctionId, bidderId: auction.leadingBidderId },
+          order: { placedAt: 'DESC' }
+        });
+        if (lastBid && lastBid.placedAt) {
+          leaderTime = new Date(lastBid.placedAt).getTime();
+        }
+        
+        bidderMaxes.set(auction.leadingBidderId, {
+          userId: auction.leadingBidderId,
+          name: auction.leadingBidderName,
+          maxAmount: Number(auction.currentPrice),
+          time: leaderTime
+        });
       }
-
-      const competitors = new Map<string, Competitor>();
 
       for (const ab of autoBids) {
-        competitors.set(ab.bidderId, {
-          bidderId: ab.bidderId,
-          bidderName: ab.bidder.name,
-          maxAmount: Number(ab.maxAmount),
-          createdAt: ab.createdAt.getTime(),
-          isAuto: true,
-        });
+        const abMax = Number(ab.maxAmount);
+        const existing = bidderMaxes.get(ab.bidderId);
+        if (existing) {
+          existing.maxAmount = Math.max(existing.maxAmount, abMax);
+          if (existing.maxAmount === abMax) {
+            existing.time = ab.updatedAt.getTime();
+          }
+        } else {
+          bidderMaxes.set(ab.bidderId, {
+            userId: ab.bidderId,
+            name: ab.bidder.name,
+            maxAmount: abMax,
+            time: ab.updatedAt.getTime()
+          });
+        }
       }
 
-      if (auction.leadingBidderId && !competitors.has(auction.leadingBidderId)) {
-        competitors.set(auction.leadingBidderId, {
-          bidderId: auction.leadingBidderId,
-          bidderName: auction.leadingBidderName,
-          maxAmount: Number(auction.currentPrice),
-          createdAt: 0,
-          isAuto: false,
-        });
+      if (bidderMaxes.size === 0) return;
+      
+      const currentPrice = Number(auction.currentPrice);
+      
+      if (bidderMaxes.size === 1) {
+        const singleUser = Array.from(bidderMaxes.values())[0];
+        if (singleUser.userId === auction.leadingBidderId) return;
+        
+        if (singleUser.maxAmount >= currentPrice) {
+          const bid = manager.create(Bid, {
+            amount: currentPrice,
+            type: BidType.AUTO,
+            auctionId,
+            bidderId: singleUser.userId,
+            bidderName: singleUser.name,
+          });
+          await manager.save(bid);
+          
+          auction.currentPrice = currentPrice;
+          auction.leadingBidderId = singleUser.userId;
+          auction.leadingBidderName = singleUser.name;
+          await manager.save(auction);
+          
+          await this.auditService.log({
+            eventType: AuditEventType.AUTO_BID_PLACED,
+            auctionId,
+            actorId: singleUser.userId,
+            actorName: singleUser.name,
+            metadata: { amount: currentPrice },
+          }, manager);
+          
+          events.push(() => {
+            this.auctionGateway.emitBidPlaced(auctionId, {
+              bidId: bid.id,
+              amount: currentPrice,
+              bidderId: singleUser.userId,
+              bidderName: singleUser.name,
+              currentPrice: currentPrice,
+              leadingBidderId: singleUser.userId,
+              leadingBidderName: singleUser.name,
+              placedAt: bid.placedAt,
+              type: 'AUTO',
+            });
+          });
+        }
+        return;
       }
 
-      const sortedCompetitors = Array.from(competitors.values()).sort((a, b) => {
+      const sorted = Array.from(bidderMaxes.values()).sort((a, b) => {
         if (b.maxAmount !== a.maxAmount) return b.maxAmount - a.maxAmount;
-        return a.createdAt - b.createdAt;
+        return a.time - b.time;
       });
 
-      if (sortedCompetitors.length === 0) return;
-
-      const top1 = sortedCompetitors[0];
-      const top2 = sortedCompetitors.length > 1 ? sortedCompetitors[1] : null;
-
-      let newPrice = Number(auction.currentPrice);
-      let newLeaderId = top1.bidderId;
-      let newLeaderName = top1.bidderName;
-
-      if (top2) {
-        if (top1.bidderId === auction.leadingBidderId) {
-           const requiredPrice = Math.min(top1.maxAmount, top2.maxAmount + calculateMinimumIncrement(top2.maxAmount));
-           newPrice = Math.max(Number(auction.currentPrice), requiredPrice);
-        } else {
-           newPrice = Math.min(top1.maxAmount, top2.maxAmount + calculateMinimumIncrement(top2.maxAmount));
-        }
+      const winner = sorted[0];
+      const challenger = sorted[1];
+      
+      // Calculate new price
+      let newPrice = currentPrice;
+      if (winner.maxAmount > challenger.maxAmount) {
+         // maxC < maxL: leader stays, price = min(maxL, maxC + incAt(maxC))
+         const challengerInc = calculateMinimumIncrement(challenger.maxAmount);
+         const competitorMinRequired = challenger.maxAmount + challengerInc;
+         newPrice = Math.min(winner.maxAmount, competitorMinRequired);
       } else {
-        newPrice = Number(auction.currentPrice);
+         // maxC == maxL: the earlier max wins, price = maxL
+         newPrice = winner.maxAmount;
+      }
+      
+      newPrice = Math.max(currentPrice, newPrice);
+
+      // No change needed
+      if (winner.userId === auction.leadingBidderId && newPrice === currentPrice) {
+        return;
       }
 
-      const priceIncreased = newPrice > Number(auction.currentPrice);
-      const leaderChanged = auction.leadingBidderId !== newLeaderId;
+      // We have a new AUTO bid
+      const bid = manager.create(Bid, {
+        amount: newPrice,
+        type: BidType.AUTO,
+        auctionId,
+        bidderId: winner.userId,
+        bidderName: winner.name,
+      });
+      await manager.save(bid);
 
-      if (priceIncreased || leaderChanged) {
-        if (newPrice > top1.maxAmount) {
-           newPrice = top1.maxAmount;
-        }
+      auction.currentPrice = newPrice;
+      auction.leadingBidderId = winner.userId;
+      auction.leadingBidderName = winner.name;
 
-        if (top1.isAuto) {
-           const bid = manager.create(Bid, {
-             amount: newPrice,
-             type: BidType.AUTO,
-             auctionId,
-             bidderId: newLeaderId,
-             bidderName: newLeaderName,
-           });
-           await manager.save(bid);
-
-           const previousLeader = auction.leadingBidderId;
-           auction.currentPrice = newPrice;
-           auction.leadingBidderId = newLeaderId;
-           auction.leadingBidderName = newLeaderName;
-           
-           const now = new Date();
-           const secondsRemaining = (auction.endTime.getTime() - now.getTime()) / 1000;
-           let extended = false;
-           if (
-             secondsRemaining <= auction.antiSnipingDuration &&
-             auction.extensionCount < auction.maxExtensions
-           ) {
-             auction.endTime = new Date(auction.endTime.getTime() + auction.extensionDuration * 1000);
-             auction.extensionCount += 1;
-             extended = true;
-           }
-
-           await manager.save(auction);
-           
-           await this.auditService.log({
-             eventType: AuditEventType.AUTO_BID_PLACED,
-             auctionId,
-             actorId: newLeaderId,
-             actorName: newLeaderName,
-             metadata: { amount: newPrice },
-           }, manager);
-
-           if (previousLeader !== newLeaderId) {
-             await this.auditService.log({
-               eventType: AuditEventType.LEADER_CHANGED,
-               auctionId,
-               actorId: newLeaderId,
-               actorName: newLeaderName,
-               metadata: { previousLeader, newLeader: newLeaderId },
-             }, manager);
-           }
-
-           events.push(() => {
-             this.auctionGateway.emitBidPlaced(auctionId, {
-               bidId: bid.id,
-               amount: newPrice,
-               bidderId: newLeaderId,
-               bidderName: newLeaderName,
-               currentPrice: newPrice,
-               leadingBidderId: newLeaderId,
-               leadingBidderName: newLeaderName,
-               placedAt: bid.placedAt,
-               type: 'AUTO',
-             });
-
-             if (extended) {
-               this.auctionGateway.emitAuctionExtended(auctionId, {
-                 newEndTime: auction.endTime,
-                 extensionCount: auction.extensionCount,
-               });
-             }
-           });
-        }
+      // Anti-sniping check
+      const now = new Date();
+      const secondsRemaining = (auction.endTime.getTime() - now.getTime()) / 1000;
+      let extended = false;
+      if (
+        secondsRemaining <= auction.antiSnipingDuration &&
+        auction.extensionCount < auction.maxExtensions
+      ) {
+        auction.endTime = new Date(
+          auction.endTime.getTime() + auction.extensionDuration * 1000,
+        );
+        auction.extensionCount += 1;
+        extended = true;
       }
+
+      await manager.save(auction);
+
+      await this.auditService.log({
+        eventType: AuditEventType.AUTO_BID_PLACED,
+        auctionId,
+        actorId: winner.userId,
+        actorName: winner.name,
+        metadata: { amount: newPrice },
+      }, manager);
+
+      events.push(() => {
+        this.auctionGateway.emitBidPlaced(auctionId, {
+          bidId: bid.id,
+          amount: newPrice,
+          bidderId: winner.userId,
+          bidderName: winner.name,
+          currentPrice: newPrice,
+          leadingBidderId: winner.userId,
+          leadingBidderName: winner.name,
+          placedAt: bid.placedAt,
+          type: 'AUTO',
+        });
+
+        if (extended) {
+          this.auctionGateway.emitAuctionExtended(auctionId, {
+            newEndTime: auction.endTime,
+            extensionCount: auction.extensionCount,
+          });
+        }
+      });
     };
 
     if (providedManager && providedEvents) {
-      // Run within the caller's transaction
       await doWork(providedManager, providedEvents);
     } else {
-      // Standalone execution (e.g. from setAutoBid)
       const events: (() => void)[] = [];
       await this.dataSource.transaction(async (manager) => {
         await manager.query(`SET LOCAL lock_timeout = '5000'`);
@@ -464,6 +503,8 @@ export class BidsService {
         );
       }
 
+      const previousLeader = auction.leadingBidderId;
+
       // Upsert auto-bid
       let autoBid = await manager.findOne(AutoBid, {
         where: { auctionId, bidderId: bidder.id },
@@ -487,17 +528,27 @@ export class BidsService {
         auctionId,
         actorId: bidder.id,
         actorName: bidder.name,
-        metadata: { status: 'configured' },
+        metadata: { maxAmount: dto.maxAmount },
       }, manager);
 
       // Trigger auto-bidding if auction is live (within same transaction)
       if (auction.status === AuctionStatus.LIVE) {
         await this.processAutoBids(
           auctionId,
-          auction.leadingBidderId || '',
           manager,
           events,
         );
+      }
+      
+      const finalAuction = await manager.findOne(Auction, { where: { id: auctionId } });
+      if (previousLeader && finalAuction && finalAuction.leadingBidderId !== previousLeader) {
+        await this.auditService.log({
+          eventType: AuditEventType.LEADER_CHANGED,
+          auctionId,
+          actorId: finalAuction.leadingBidderId,
+          actorName: finalAuction.leadingBidderName,
+          metadata: { previousLeader, newLeader: finalAuction.leadingBidderId },
+        }, manager);
       }
     });
 
