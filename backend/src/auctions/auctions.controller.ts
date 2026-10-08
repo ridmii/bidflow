@@ -17,18 +17,22 @@ import { CreateAuctionDto, UpdateAuctionDto } from './dto/create-auction.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuctionStatus } from './entities/auction.entity';
 
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+
 @Controller('auctions')
 export class AuctionsController {
   constructor(private readonly auctionsService: AuctionsService) {}
 
   @Get()
-  findAll(@Query('status') status?: AuctionStatus) {
-    return this.auctionsService.findAll(status);
+  @UseGuards(OptionalJwtAuthGuard)
+  findAll(@Request() req, @Query('status') status?: AuctionStatus) {
+    return this.auctionsService.findAll(status, req.user);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.auctionsService.findOne(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  findOne(@Param('id') id: string, @Request() req) {
+    return this.auctionsService.findOne(id, req.user);
   }
 
   @Get(':id/minimum-bid')
@@ -37,9 +41,9 @@ export class AuctionsController {
   }
 
   @Get(':id/audit')
-  @UseGuards(JwtAuthGuard)
-  getAuditLog(@Param('id') id: string) {
-    return this.auctionsService.getAuctionAuditLog(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  getAuditLog(@Param('id') id: string, @Request() req) {
+    return this.auctionsService.getAuctionAuditLog(id, req.user);
   }
 
   @Post()

@@ -4,7 +4,7 @@ import { SetAutoBidDto } from './dto/set-auto-bid.dto';
 export declare class BidsController {
     private readonly bidsService;
     constructor(bidsService: BidsService);
-    placeBid(auctionId: string, req: any, dto: PlaceBidDto): Promise<{
+    placeBid(auctionId: string, req: any, dto: PlaceBidDto, idempotencyKey?: string): Promise<{
         message: string;
         bid: {
             id: string;
@@ -13,7 +13,7 @@ export declare class BidsController {
             auctionId: string;
         };
     }>;
-    getBidHistory(auctionId: string): Promise<any[]>;
+    getBidHistory(auctionId: string, req: any): Promise<any[]>;
     setAutoBid(auctionId: string, req: any, dto: SetAutoBidDto): Promise<{
         message: string;
     }>;

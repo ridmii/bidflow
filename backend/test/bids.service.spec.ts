@@ -33,6 +33,20 @@ describe('BidsService - Bid Validation Logic', () => {
     role: 'bidder',
   });
 
+  const makeManager = (auctionOverride?: any) => ({
+    findOne: vi.fn().mockResolvedValue(auctionOverride),
+    create: vi.fn((Entity, data) => data),
+    save: vi.fn((data) => ({ ...data, placedAt: new Date() })),
+    find: vi.fn(() => []),
+    query: vi.fn(() => []),
+    createQueryBuilder: vi.fn(() => ({
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      addOrderBy: vi.fn().mockReturnThis(),
+      getOne: vi.fn(() => null),
+    })),
+  });
+
   beforeEach(() => {
     mockBidsRepo = {
       findOne: vi.fn(),
@@ -47,23 +61,9 @@ describe('BidsService - Bid Validation Logic', () => {
       emitAuctionExtended: vi.fn(),
     };
 
-    // Mock dataSource transaction
+    // Mock dataSource transaction — default manager returns no auction
     mockDataSource = {
-      transaction: vi.fn((cb) => {
-        const manager = {
-          findOne: vi.fn(),
-          create: vi.fn((Entity, data) => data),
-          save: vi.fn((data) => ({ ...data, placedAt: new Date() })),
-          find: vi.fn(() => []),
-          createQueryBuilder: vi.fn(() => ({
-            where: vi.fn().mockReturnThis(),
-            orderBy: vi.fn().mockReturnThis(),
-            addOrderBy: vi.fn().mockReturnThis(),
-            getOne: vi.fn(() => null),
-          })),
-        };
-        return cb(manager);
-      }),
+      transaction: vi.fn((cb) => cb(makeManager())),
     };
 
     bidsService = new BidsService(
@@ -80,14 +80,7 @@ describe('BidsService - Bid Validation Logic', () => {
     it('rejects a bid below minimum increment', async () => {
       const auction = makeMockAuction({ currentPrice: 25000 });
       // Minimum next bid should be 25000 + 500 = 25500
-      mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-          create: vi.fn((Entity, data) => data),
-          save: vi.fn((data) => data),
-        };
-        return cb(manager);
-      });
+      mockDataSource.transaction = vi.fn(async (cb) => cb(makeManager(auction)));
 
       await expect(
         bidsService.placeBid('auction-1', makeMockUser() as any, {
@@ -98,14 +91,11 @@ describe('BidsService - Bid Validation Logic', () => {
 
     it('accepts a bid at exact minimum increment', async () => {
       const auction = makeMockAuction({ currentPrice: 25000 });
+      let idCounter = 0;
       mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-          create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
-          save: vi.fn((data) => ({ ...data, placedAt: new Date() })),
-          find: vi.fn(() => []),
-        };
-        return cb(manager);
+        const m = makeManager(auction);
+        m.create = vi.fn((Entity, data) => ({ ...data, id: `bid-${++idCounter}` }));
+        return cb(m);
       });
 
       const result = await bidsService.placeBid(
@@ -120,12 +110,7 @@ describe('BidsService - Bid Validation Logic', () => {
   describe('Auction status validation', () => {
     it('rejects bid on non-live auction', async () => {
       const auction = makeMockAuction({ status: 'DRAFT' });
-      mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-        };
-        return cb(manager);
-      });
+      mockDataSource.transaction = vi.fn(async (cb) => cb(makeManager(auction)));
 
       await expect(
         bidsService.placeBid('auction-1', makeMockUser() as any, {
@@ -138,12 +123,7 @@ describe('BidsService - Bid Validation Logic', () => {
       const auction = makeMockAuction({
         endTime: new Date(Date.now() - 1000), // Past
       });
-      mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-        };
-        return cb(manager);
-      });
+      mockDataSource.transaction = vi.fn(async (cb) => cb(makeManager(auction)));
 
       await expect(
         bidsService.placeBid('auction-1', makeMockUser() as any, {
@@ -157,15 +137,15 @@ describe('BidsService - Bid Validation Logic', () => {
     it('returns existing bid for duplicate request with same idempotencyKey', async () => {
       const auction = makeMockAuction({ currentPrice: 25000 });
       mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn((entity) => {
-            if (entity.name === 'Auction') return auction;
-            return { id: 'existing-bid', idempotencyKey: 'key-123' };
-          }), query: vi.fn(),
-          create: vi.fn((Entity, data) => data),
-          save: vi.fn((data) => data),
-        };
-        return cb(manager);
+        const m = makeManager(auction);
+        // Second findOne call (for Bid) returns the existing bid
+        let callCount = 0;
+        m.findOne = vi.fn(() => {
+          callCount++;
+          if (callCount === 1) return auction; // Auction lookup
+          return { id: 'existing-bid', idempotencyKey: 'key-123' }; // Bid lookup
+        });
+        return cb(m);
       });
 
       const res = await bidsService.placeBid('auction-1', makeMockUser() as any, {
@@ -180,14 +160,9 @@ describe('BidsService - Bid Validation Logic', () => {
     it('does not emit any events if the transaction throws', async () => {
       const auction = makeMockAuction({ currentPrice: 25000 });
       mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-          create: vi.fn((Entity, data) => data),
-          save: vi.fn(() => {
-            throw new Error('Database connection lost');
-          }),
-        };
-        return cb(manager);
+        const m = makeManager(auction);
+        m.save = vi.fn(() => { throw new Error('Database connection lost'); });
+        return cb(m);
       });
 
       await expect(
@@ -201,9 +176,8 @@ describe('BidsService - Bid Validation Logic', () => {
     });
 
     it('returns 409 ConflictException on lock timeout/deadlock with no events emitted', async () => {
-      const auction = makeMockAuction({ currentPrice: 25000 });
       let attempts = 0;
-      mockDataSource.transaction = vi.fn(async (cb) => {
+      mockDataSource.transaction = vi.fn(async () => {
         attempts++;
         const err = new Error('Lock timeout');
         (err as any).code = '55P03';
@@ -235,16 +209,14 @@ describe('BidsService - Bid Validation Logic', () => {
 
       let savedAuction: any;
       mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-          create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
-          save: vi.fn((data) => {
-            savedAuction = data;
-            return { ...data, placedAt: new Date() };
-          }),
-          find: vi.fn(() => []),
-        };
-        return cb(manager);
+        const m = makeManager(auction);
+        let idCounter = 0;
+        m.create = vi.fn((Entity, data) => ({ ...data, id: `bid-${++idCounter}` }));
+        m.save = vi.fn((data) => {
+          savedAuction = data;
+          return { ...data, placedAt: new Date() };
+        });
+        return cb(m);
       });
 
       await bidsService.placeBid('auction-1', makeMockUser() as any, {
@@ -265,16 +237,14 @@ describe('BidsService - Bid Validation Logic', () => {
 
       let savedAuction: any;
       mockDataSource.transaction = vi.fn(async (cb) => {
-        const manager = {
-          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
-          create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
-          save: vi.fn((data) => {
-            savedAuction = data;
-            return { ...data, placedAt: new Date() };
-          }),
-          find: vi.fn(() => []),
-        };
-        return cb(manager);
+        const m = makeManager(auction);
+        let idCounter = 0;
+        m.create = vi.fn((Entity, data) => ({ ...data, id: `bid-${++idCounter}` }));
+        m.save = vi.fn((data) => {
+          savedAuction = data;
+          return { ...data, placedAt: new Date() };
+        });
+        return cb(m);
       });
 
       await bidsService.placeBid('auction-1', makeMockUser() as any, {

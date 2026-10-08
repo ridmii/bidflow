@@ -14,15 +14,15 @@ const typeorm_1 = require("typeorm");
 const bid_entity_1 = require("../../bids/entities/bid.entity");
 const auto_bid_entity_1 = require("../../bids/entities/auto-bid.entity");
 const audit_log_entity_1 = require("../../audit/entities/audit-log.entity");
-var AuctionStatus;
-(function (AuctionStatus) {
-    AuctionStatus["DRAFT"] = "DRAFT";
-    AuctionStatus["SCHEDULED"] = "SCHEDULED";
-    AuctionStatus["LIVE"] = "LIVE";
-    AuctionStatus["COMPLETED"] = "COMPLETED";
-    AuctionStatus["CANCELLED"] = "CANCELLED";
-    AuctionStatus["RESERVE_NOT_MET"] = "RESERVE_NOT_MET";
-})(AuctionStatus || (exports.AuctionStatus = AuctionStatus = {}));
+exports.AuctionStatus = {
+    DRAFT: 'DRAFT',
+    SCHEDULED: 'SCHEDULED',
+    LIVE: 'LIVE',
+    COMPLETING: 'COMPLETING',
+    COMPLETED: 'COMPLETED',
+    CANCELLED: 'CANCELLED',
+    RESERVE_NOT_MET: 'RESERVE_NOT_MET',
+};
 let Auction = class Auction {
     id;
     title;
@@ -66,23 +66,23 @@ __decorate([
     __metadata("design:type", String)
 ], Auction.prototype, "description", void 0);
 __decorate([
-    (0, typeorm_1.Column)({}),
+    (0, typeorm_1.Column)({ type: 'decimal' }),
     __metadata("design:type", Number)
 ], Auction.prototype, "startingPrice", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ nullable: true }),
+    (0, typeorm_1.Column)({ type: 'decimal', nullable: true }),
     __metadata("design:type", Number)
 ], Auction.prototype, "reservePrice", void 0);
 __decorate([
-    (0, typeorm_1.Column)({}),
+    (0, typeorm_1.Column)({ type: 'decimal' }),
     __metadata("design:type", Number)
 ], Auction.prototype, "currentPrice", void 0);
 __decorate([
-    (0, typeorm_1.Column)({}),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Date)
 ], Auction.prototype, "startTime", void 0);
 __decorate([
-    (0, typeorm_1.Column)({}),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Date)
 ], Auction.prototype, "endTime", void 0);
 __decorate([
@@ -106,7 +106,7 @@ __decorate([
     __metadata("design:type", Number)
 ], Auction.prototype, "extensionCount", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ enum: AuctionStatus, default: AuctionStatus.DRAFT }),
+    (0, typeorm_1.Column)({ type: 'varchar', default: exports.AuctionStatus.DRAFT }),
     __metadata("design:type", String)
 ], Auction.prototype, "status", void 0);
 __decorate([
@@ -118,7 +118,7 @@ __decorate([
     __metadata("design:type", String)
 ], Auction.prototype, "winnerName", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ nullable: true }),
+    (0, typeorm_1.Column)({ type: 'decimal', nullable: true }),
     __metadata("design:type", Number)
 ], Auction.prototype, "winningBidAmount", void 0);
 __decorate([

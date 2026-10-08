@@ -1,4 +1,4 @@
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, EntityManager } from 'typeorm';
 import { Bid } from './entities/bid.entity';
 import { AutoBid } from './entities/auto-bid.entity';
 import { Auction } from '../auctions/entities/auction.entity';
@@ -16,15 +16,17 @@ export declare class BidsService {
     private auctionGateway;
     constructor(bidsRepo: Repository<Bid>, autoBidsRepo: Repository<AutoBid>, auctionsRepo: Repository<Auction>, dataSource: DataSource, auditService: AuditService, auctionGateway: AuctionGateway);
     placeBid(auctionId: string, bidder: User, dto: PlaceBidDto): Promise<Bid>;
-    processAutoBids(auctionId: string, currentWinnerId: string): Promise<void>;
+    private executePlaceBid;
+    processAutoBids(auctionId: string, providedManager?: EntityManager, providedEvents?: (() => void)[]): Promise<void>;
     setAutoBid(auctionId: string, bidder: User, dto: SetAutoBidDto): Promise<{
         message: string;
     }>;
-    getBidHistory(auctionId: string): Promise<any[]>;
+    getBidHistory(auctionId: string, user?: User): Promise<any[]>;
     getMyAutoBid(auctionId: string, userId: string): Promise<{
         id: string;
         maxAmount: number;
         isActive: boolean;
         auctionId: string;
     }>;
+    getAliasMap(auctionId: string, providedManager?: EntityManager): Promise<Map<string, string>>;
 }

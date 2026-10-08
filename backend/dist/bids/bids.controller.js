@@ -23,7 +23,14 @@ let BidsController = class BidsController {
     constructor(bidsService) {
         this.bidsService = bidsService;
     }
-    async placeBid(auctionId, req, dto) {
+    async placeBid(auctionId, req, dto, idempotencyKey) {
+        if (!idempotencyKey) {
+            throw new common_1.BadRequestException('Idempotency-Key header is required');
+        }
+        if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 1 || idempotencyKey.length > 64) {
+            throw new common_1.BadRequestException('Idempotency-Key must be a string up to 64 characters');
+        }
+        dto.idempotencyKey = idempotencyKey;
         const bid = await this.bidsService.placeBid(auctionId, req.user, dto);
         return {
             message: 'Bid placed successfully',
@@ -35,8 +42,8 @@ let BidsController = class BidsController {
             },
         };
     }
-    async getBidHistory(auctionId) {
-        return this.bidsService.getBidHistory(auctionId);
+    async getBidHistory(auctionId, req) {
+        return this.bidsService.getBidHistory(auctionId, req.user);
     }
     async setAutoBid(auctionId, req, dto) {
         return this.bidsService.setAutoBid(auctionId, req.user, dto);
@@ -52,15 +59,17 @@ __decorate([
     __param(0, (0, common_1.Param)('auctionId')),
     __param(1, (0, common_1.Request)()),
     __param(2, (0, common_1.Body)()),
+    __param(3, (0, common_1.Headers)('idempotency-key')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, place_bid_dto_1.PlaceBidDto]),
+    __metadata("design:paramtypes", [String, Object, place_bid_dto_1.PlaceBidDto, String]),
     __metadata("design:returntype", Promise)
 ], BidsController.prototype, "placeBid", null);
 __decorate([
     (0, common_1.Get)(),
     __param(0, (0, common_1.Param)('auctionId')),
+    __param(1, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], BidsController.prototype, "getBidHistory", null);
 __decorate([

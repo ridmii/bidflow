@@ -22,16 +22,17 @@ let AuditService = class AuditService {
     constructor(auditRepo) {
         this.auditRepo = auditRepo;
     }
-    async log(params) {
+    async log(params, manager) {
         try {
-            const entry = this.auditRepo.create({
+            const repo = manager ? manager.getRepository(audit_log_entity_1.AuditLog) : this.auditRepo;
+            const entry = repo.create({
                 eventType: params.eventType,
                 auctionId: params.auctionId,
                 actorId: params.actorId,
                 actorName: params.actorName,
                 metadata: params.metadata || {},
             });
-            await this.auditRepo.save(entry);
+            await repo.save(entry);
         }
         catch (err) {
             console.error('Audit log failed:', err);

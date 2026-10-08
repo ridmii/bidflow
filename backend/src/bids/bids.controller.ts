@@ -50,8 +50,8 @@ export class BidsController {
   }
 
   @Get()
-  async getBidHistory(@Param('auctionId') auctionId: string) {
-    return this.bidsService.getBidHistory(auctionId);
+  async getBidHistory(@Param('auctionId') auctionId: string, @Request() req) {
+    return this.bidsService.getBidHistory(auctionId, req.user);
   }
 
   @Post('auto')

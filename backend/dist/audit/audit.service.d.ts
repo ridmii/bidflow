@@ -10,7 +10,7 @@ interface LogParams {
 export declare class AuditService {
     private auditRepo;
     constructor(auditRepo: Repository<AuditLog>);
-    log(params: LogParams): Promise<void>;
+    log(params: LogParams, manager?: import('typeorm').EntityManager): Promise<void>;
     getAuctionLogs(auctionId: string): Promise<AuditLog[]>;
 }
 export {};

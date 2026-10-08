@@ -1,14 +1,16 @@
 import { Bid } from '../../bids/entities/bid.entity';
 import { AutoBid } from '../../bids/entities/auto-bid.entity';
 import { AuditLog } from '../../audit/entities/audit-log.entity';
-export declare enum AuctionStatus {
-    DRAFT = "DRAFT",
-    SCHEDULED = "SCHEDULED",
-    LIVE = "LIVE",
-    COMPLETED = "COMPLETED",
-    CANCELLED = "CANCELLED",
-    RESERVE_NOT_MET = "RESERVE_NOT_MET"
-}
+export declare const AuctionStatus: {
+    DRAFT: "DRAFT";
+    SCHEDULED: "SCHEDULED";
+    LIVE: "LIVE";
+    COMPLETING: "COMPLETING";
+    COMPLETED: "COMPLETED";
+    CANCELLED: "CANCELLED";
+    RESERVE_NOT_MET: "RESERVE_NOT_MET";
+};
+export type AuctionStatus = (typeof AuctionStatus)[keyof typeof AuctionStatus];
 export declare class Auction {
     id: string;
     title: string;

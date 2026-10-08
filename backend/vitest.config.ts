@@ -8,5 +8,6 @@ export default defineConfig({
     root: './',
     include: ['**/*.spec.ts'],
     setupFiles: ['./test/setup.ts'],
+    fileParallelism: false,
   },
 });

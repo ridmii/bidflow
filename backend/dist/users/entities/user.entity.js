@@ -13,11 +13,10 @@ exports.User = exports.UserRole = void 0;
 const typeorm_1 = require("typeorm");
 const bid_entity_1 = require("../../bids/entities/bid.entity");
 const auto_bid_entity_1 = require("../../bids/entities/auto-bid.entity");
-var UserRole;
-(function (UserRole) {
-    UserRole["ADMIN"] = "admin";
-    UserRole["BIDDER"] = "bidder";
-})(UserRole || (exports.UserRole = UserRole = {}));
+exports.UserRole = {
+    ADMIN: 'ADMIN',
+    BIDDER: 'BIDDER',
+};
 let User = class User {
     id;
     email;
@@ -48,7 +47,7 @@ __decorate([
     __metadata("design:type", String)
 ], User.prototype, "password", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ enum: UserRole, default: UserRole.BIDDER }),
+    (0, typeorm_1.Column)({ type: 'varchar', default: exports.UserRole.BIDDER }),
     __metadata("design:type", String)
 ], User.prototype, "role", void 0);
 __decorate([

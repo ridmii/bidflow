@@ -19,22 +19,23 @@ const auctions_service_1 = require("./auctions.service");
 const create_auction_dto_1 = require("./dto/create-auction.dto");
 const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
 const auction_entity_1 = require("./entities/auction.entity");
+const optional_jwt_auth_guard_1 = require("../auth/guards/optional-jwt-auth.guard");
 let AuctionsController = class AuctionsController {
     auctionsService;
     constructor(auctionsService) {
         this.auctionsService = auctionsService;
     }
-    findAll(status) {
-        return this.auctionsService.findAll(status);
+    findAll(req, status) {
+        return this.auctionsService.findAll(status, req.user);
     }
-    findOne(id) {
-        return this.auctionsService.findOne(id);
+    findOne(id, req) {
+        return this.auctionsService.findOne(id, req.user);
     }
     getMinimumNextBid(id) {
         return this.auctionsService.getMinimumNextBid(id);
     }
-    getAuditLog(id) {
-        return this.auctionsService.getAuctionAuditLog(id);
+    getAuditLog(id, req) {
+        return this.auctionsService.getAuctionAuditLog(id, req.user);
     }
     create(req, dto) {
         return this.auctionsService.create(req.user, dto);
@@ -55,16 +56,20 @@ let AuctionsController = class AuctionsController {
 exports.AuctionsController = AuctionsController;
 __decorate([
     (0, common_2.Get)(),
-    __param(0, (0, common_2.Query)('status')),
+    (0, common_2.UseGuards)(optional_jwt_auth_guard_1.OptionalJwtAuthGuard),
+    __param(0, (0, common_2.Request)()),
+    __param(1, (0, common_2.Query)('status')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], AuctionsController.prototype, "findAll", null);
 __decorate([
     (0, common_2.Get)(':id'),
+    (0, common_2.UseGuards)(optional_jwt_auth_guard_1.OptionalJwtAuthGuard),
     __param(0, (0, common_2.Param)('id')),
+    __param(1, (0, common_2.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], AuctionsController.prototype, "findOne", null);
 __decorate([
@@ -76,10 +81,11 @@ __decorate([
 ], AuctionsController.prototype, "getMinimumNextBid", null);
 __decorate([
     (0, common_2.Get)(':id/audit'),
-    (0, common_2.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_2.UseGuards)(optional_jwt_auth_guard_1.OptionalJwtAuthGuard),
     __param(0, (0, common_2.Param)('id')),
+    __param(1, (0, common_2.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], AuctionsController.prototype, "getAuditLog", null);
 __decorate([

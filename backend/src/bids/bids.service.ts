@@ -217,16 +217,17 @@ export class BidsService {
         metadata: { amount: dto.amount, type: 'MANUAL' },
       }, manager);
 
+      const aliasMap = await this.getAliasMap(auctionId, manager);
+      const bidderAlias = aliasMap.get(bidder.id) || 'Bidder';
+
       // Collect real-time events to be emitted AFTER transaction commits
       events.push(() => {
         this.auctionGateway.emitBidPlaced(auctionId, {
           bidId: bid.id,
           amount: dto.amount,
-          bidderId: bidder.id,
-          bidderName: bidder.name,
+          bidderName: bidderAlias,
           currentPrice: dto.amount,
-          leadingBidderId: bidder.id,
-          leadingBidderName: bidder.name,
+          leadingBidderName: bidderAlias,
           placedAt: bid.placedAt,
           type: 'MANUAL',
         });
@@ -356,15 +357,16 @@ export class BidsService {
             metadata: { amount: currentPrice },
           }, manager);
           
+          const aliasMap = await this.getAliasMap(auctionId, manager);
+          const alias = aliasMap.get(singleUser.userId) || 'Bidder';
+
           events.push(() => {
             this.auctionGateway.emitBidPlaced(auctionId, {
               bidId: bid.id,
               amount: currentPrice,
-              bidderId: singleUser.userId,
-              bidderName: singleUser.name,
+              bidderName: alias,
               currentPrice: currentPrice,
-              leadingBidderId: singleUser.userId,
-              leadingBidderName: singleUser.name,
+              leadingBidderName: alias,
               placedAt: bid.placedAt,
               type: 'AUTO',
             });
@@ -439,15 +441,16 @@ export class BidsService {
         metadata: { amount: newPrice },
       }, manager);
 
+      const aliasMap = await this.getAliasMap(auctionId, manager);
+      const winnerAlias = aliasMap.get(winner.userId) || 'Bidder';
+
       events.push(() => {
         this.auctionGateway.emitBidPlaced(auctionId, {
           bidId: bid.id,
           amount: newPrice,
-          bidderId: winner.userId,
-          bidderName: winner.name,
+          bidderName: winnerAlias,
           currentPrice: newPrice,
-          leadingBidderId: winner.userId,
-          leadingBidderName: winner.name,
+          leadingBidderName: winnerAlias,
           placedAt: bid.placedAt,
           type: 'AUTO',
         });
@@ -528,7 +531,7 @@ export class BidsService {
         auctionId,
         actorId: bidder.id,
         actorName: bidder.name,
-        metadata: { maxAmount: dto.maxAmount },
+        metadata: { status: 'CONFIGURED' },
       }, manager);
 
       // Trigger auto-bidding if auction is live (within same transaction)
@@ -557,7 +560,7 @@ export class BidsService {
     return { message: 'Auto-bid configured successfully' };
   }
 
-  async getBidHistory(auctionId: string): Promise<any[]> {
+  async getBidHistory(auctionId: string, user?: User): Promise<any[]> {
     const auction = await this.auctionsRepo.findOne({
       where: { id: auctionId },
     });
@@ -570,12 +573,14 @@ export class BidsService {
       take: 100,
     });
 
+    const aliasMap = await this.getAliasMap(auctionId);
+
     // Do NOT expose full bidder identity to public
     return bids.map((bid) => ({
       id: bid.id,
       amount: bid.amount,
-      bidderName: bid.bidderName,
-      bidderId: bid.bidderId,
+      bidderName: aliasMap.get(bid.bidderId) || 'Bidder',
+      isYou: user ? bid.bidderId === user.id : false,
       type: bid.type,
       placedAt: bid.placedAt,
     }));
@@ -592,5 +597,19 @@ export class BidsService {
       isActive: autoBid.isActive,
       auctionId: autoBid.auctionId,
     };
+  }
+
+  async getAliasMap(auctionId: string, providedManager?: EntityManager): Promise<Map<string, string>> {
+    const runner = providedManager || this.bidsRepo.manager;
+    const bidderOrdering = await runner.query(
+      `SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`,
+      [auctionId]
+    );
+      
+    const map = new Map<string, string>();
+    bidderOrdering.forEach((row, i) => {
+      map.set(row.bidderId, `Bidder ${i + 1}`);
+    });
+    return map;
   }
 }

@@ -13,11 +13,10 @@ exports.Bid = exports.BidType = void 0;
 const typeorm_1 = require("typeorm");
 const auction_entity_1 = require("../../auctions/entities/auction.entity");
 const user_entity_1 = require("../../users/entities/user.entity");
-var BidType;
-(function (BidType) {
-    BidType["MANUAL"] = "MANUAL";
-    BidType["AUTO"] = "AUTO";
-})(BidType || (exports.BidType = BidType = {}));
+exports.BidType = {
+    MANUAL: 'MANUAL',
+    AUTO: 'AUTO',
+};
 let Bid = class Bid {
     id;
     amount;
@@ -36,11 +35,11 @@ __decorate([
     __metadata("design:type", String)
 ], Bid.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({}),
+    (0, typeorm_1.Column)({ type: 'decimal' }),
     __metadata("design:type", Number)
 ], Bid.prototype, "amount", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ enum: BidType, default: BidType.MANUAL }),
+    (0, typeorm_1.Column)({ type: 'varchar', default: exports.BidType.MANUAL }),
     __metadata("design:type", String)
 ], Bid.prototype, "type", void 0);
 __decorate([
@@ -70,7 +69,7 @@ __decorate([
     __metadata("design:type", user_entity_1.User)
 ], Bid.prototype, "bidder", void 0);
 __decorate([
-    (0, typeorm_1.CreateDateColumn)(),
+    (0, typeorm_1.CreateDateColumn)({ type: 'timestamp', default: () => 'clock_timestamp()' }),
     __metadata("design:type", Date)
 ], Bid.prototype, "placedAt", void 0);
 exports.Bid = Bid = __decorate([

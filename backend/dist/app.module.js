@@ -19,6 +19,13 @@ const bids_module_1 = require("./bids/bids.module");
 const gateway_module_1 = require("./gateway/gateway.module");
 const scheduler_module_1 = require("./scheduler/scheduler.module");
 const audit_module_1 = require("./audit/audit.module");
+const app_controller_1 = require("./app.controller");
+const app_service_1 = require("./app.service");
+const auction_entity_1 = require("./auctions/entities/auction.entity");
+const bid_entity_1 = require("./bids/entities/bid.entity");
+const auto_bid_entity_1 = require("./bids/entities/auto-bid.entity");
+const user_entity_1 = require("./users/entities/user.entity");
+const audit_log_entity_1 = require("./audit/entities/audit-log.entity");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -43,7 +50,7 @@ exports.AppModule = AppModule = __decorate([
                         username: config.get('DB_USERNAME'),
                         password: config.get('DB_PASSWORD'),
                         database: dbName,
-                        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+                        entities: [auction_entity_1.Auction, bid_entity_1.Bid, auto_bid_entity_1.AutoBid, user_entity_1.User, audit_log_entity_1.AuditLog],
                         synchronize: false,
                         logging: process.env.NODE_ENV === 'development',
                         extra: {
@@ -63,6 +70,8 @@ exports.AppModule = AppModule = __decorate([
             scheduler_module_1.SchedulerModule,
             audit_module_1.AuditModule,
         ],
+        controllers: [app_controller_1.AppController],
+        providers: [app_service_1.AppService],
     })
 ], AppModule);
 //# sourceMappingURL=app.module.js.map

@@ -25,7 +25,7 @@ export class AuctionsService {
     private clock: ClockService,
   ) {}
 
-  async create(user: User, dto: CreateAuctionDto): Promise<Auction> {
+  async create(user: User, dto: CreateAuctionDto): Promise<any> {
     if (user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Only admins can create auctions');
     }
@@ -67,10 +67,10 @@ export class AuctionsService {
       metadata: { title: dto.title, startingPrice: dto.startingPrice },
     });
 
-    return saved;
+    return this.sanitizeAuction(saved, user);
   }
 
-  async findAll(status?: AuctionStatus): Promise<any[]> {
+  async findAll(status?: AuctionStatus, user?: User): Promise<any[]> {
     const query = this.auctionsRepo.createQueryBuilder('auction');
 
     if (status) {
@@ -80,13 +80,13 @@ export class AuctionsService {
     query.orderBy('auction.startTime', 'DESC');
     const auctions = await query.getMany();
 
-    return auctions.map((a) => this.sanitizeAuction(a));
+    return auctions.map((a) => this.sanitizeAuction(a, user));
   }
 
-  async findOne(id: string): Promise<any> {
+  async findOne(id: string, user?: User): Promise<any> {
     const auction = await this.auctionsRepo.findOne({ where: { id } });
     if (!auction) throw new NotFoundException('Auction not found');
-    return this.sanitizeAuction(auction);
+    return this.sanitizeAuction(auction, user);
   }
 
   async update(id: string, user: User, dto: UpdateAuctionDto): Promise<any> {
@@ -106,7 +106,7 @@ export class AuctionsService {
 
     Object.assign(auction, dto);
     const saved = await this.auctionsRepo.save(auction);
-    return this.sanitizeAuction(saved);
+    return this.sanitizeAuction(saved, user);
   }
 
   async scheduleAuction(id: string, user: User): Promise<any> {
@@ -131,7 +131,7 @@ export class AuctionsService {
       metadata: { startTime: auction.startTime },
     });
 
-    return this.sanitizeAuction(saved);
+    return this.sanitizeAuction(saved, user);
   }
 
   async cancelAuction(id: string, user: User): Promise<any> {
@@ -161,14 +161,14 @@ export class AuctionsService {
       message: 'Auction has been cancelled',
     });
 
-    return this.sanitizeAuction(saved);
+    return this.sanitizeAuction(saved, user);
   }
 
   /**
    * Close an auction — race-safe and idempotent.
    *
    * Uses an atomic guarded UPDATE:
-   *   UPDATE auctions SET status='CLOSING' WHERE id=? AND status='LIVE' AND end_time <= now()
+   *   UPDATE auctions SET status='CLOSING' WHERE id=? AND status='LIVE' AND "endTime" <= now()
    *
    * Exactly one concurrent caller will see affected rows = 1 and proceed to
    * determine the winner and write events. All others skip silently.
@@ -250,12 +250,23 @@ export class AuctionsService {
         },
       }, manager);
 
+      let winnerAlias = 'Bidder';
+      if (auction.winnerId) {
+        const bidderOrdering = await manager.query(
+          `SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`,
+          [id]
+        );
+        const index = bidderOrdering.findIndex(row => row.bidderId === auction.winnerId);
+        if (index !== -1) {
+          winnerAlias = `Bidder ${index + 1}`;
+        }
+      }
+
       // Defer broadcast until after commit
       events.push(() => {
         this.auctionGateway.emitAuctionEnded(id, {
           status: finalStatus,
-          winnerId: auction.winnerId,
-          winnerName: auction.winnerName,
+          winnerName: auction.winnerId ? winnerAlias : undefined,
           winningBidAmount: auction.winningBidAmount,
           finalPrice: currentPrice,
         });
@@ -265,10 +276,52 @@ export class AuctionsService {
     events.forEach((fn) => fn());
   }
 
-  async getAuctionAuditLog(id: string): Promise<any[]> {
+  async getAuctionAuditLog(id: string, user?: User): Promise<any[]> {
     const auction = await this.auctionsRepo.findOne({ where: { id } });
     if (!auction) throw new NotFoundException('Auction not found');
-    return this.auditService.getAuctionLogs(id);
+    const logs = await this.auditService.getAuctionLogs(id);
+    const isAdmin = user?.role === UserRole.ADMIN;
+    
+    // Fetch aliases to sanitize names/IDs for non-admins
+    let aliasMap = new Map<string, string>();
+    if (!isAdmin) {
+       const { BidsService } = await import('../bids/bids.service');
+       const { moduleRef } = await import('@nestjs/core');
+       // Actually, we can just query the DB directly here to avoid circular dependency
+       const bidderOrdering = await this.dataSource.query(
+         `SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`,
+         [id]
+       );
+       bidderOrdering.forEach((row, i) => {
+         aliasMap.set(row.bidderId, `Bidder ${i + 1}`);
+       });
+    }
+
+    return logs.map(log => {
+      const sanitized = { ...log };
+      if (!isAdmin) {
+        // Hide reserve price
+        if (sanitized.metadata?.reservePrice !== undefined) {
+           sanitized.metadata = { ...sanitized.metadata };
+           delete sanitized.metadata.reservePrice;
+        }
+        
+        // Hide real names and IDs
+        if (sanitized.actorId) {
+           sanitized.actorName = aliasMap.get(sanitized.actorId) || 'Bidder';
+           sanitized.actorId = aliasMap.get(sanitized.actorId) || 'Bidder';
+        }
+        if (sanitized.metadata?.winnerName) {
+           sanitized.metadata = { ...sanitized.metadata };
+           sanitized.metadata.winnerName = aliasMap.get(sanitized.metadata.winnerId || sanitized.metadata.winnerName) || 'Bidder';
+        }
+        if (sanitized.metadata?.winnerId) {
+           sanitized.metadata = { ...sanitized.metadata };
+           sanitized.metadata.winnerId = aliasMap.get(sanitized.metadata.winnerId) || 'Bidder';
+        }
+      }
+      return sanitized;
+    });
   }
 
   async getMinimumNextBid(id: string): Promise<any> {
@@ -282,17 +335,35 @@ export class AuctionsService {
     };
   }
 
-  private sanitizeAuction(auction: Auction): any {
-    const {
-      reservePrice, // Hide reserve price from public
-      ...publicAuction
-    } = auction;
-
-    return {
-      ...publicAuction,
-      hasReservePrice: reservePrice != null,
-    };
+  private sanitizeAuction(auction: Auction, user?: User): any {
+    const { reservePrice, ...publicAuction } = auction;
+    const isAdmin = user?.role === UserRole.ADMIN;
+    
+    // Only admins see the reserve price
+    const result: any = { ...publicAuction, hasReservePrice: reservePrice != null };
+    
+    if (isAdmin) {
+      result.reservePrice = reservePrice;
+    }
+    
+    // Bidders can see if reserve was met after closing
+    if (auction.status === AuctionStatus.COMPLETED || auction.status === AuctionStatus.RESERVE_NOT_MET) {
+       result.reserveMet = auction.status === AuctionStatus.COMPLETED && reservePrice != null;
+    }
+    
+    // Strip identity fields from non-admin responses
+    if (!isAdmin) {
+      delete result.leadingBidderName;
+      delete result.leadingBidderId;
+      delete result.winnerName;
+      delete result.winnerId;
+      delete result.isClosing;
+      delete result.createdById;
+    }
+    
+    return result;
   }
+
   async deleteAuction(id: string, user: User) {
     if ((user as any).role !== 'ADMIN') {
       throw new NotFoundException('Only admins can delete auctions');

@@ -1,9 +1,10 @@
 import { Bid } from '../../bids/entities/bid.entity';
 import { AutoBid } from '../../bids/entities/auto-bid.entity';
-export declare enum UserRole {
-    ADMIN = "admin",
-    BIDDER = "bidder"
-}
+export declare const UserRole: {
+    ADMIN: "ADMIN";
+    BIDDER: "BIDDER";
+};
+export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 export declare class User {
     id: string;
     email: string;

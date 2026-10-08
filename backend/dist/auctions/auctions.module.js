@@ -14,6 +14,7 @@ const auctions_controller_1 = require("./auctions.controller");
 const auction_entity_1 = require("./entities/auction.entity");
 const audit_module_1 = require("../audit/audit.module");
 const gateway_module_1 = require("../gateway/gateway.module");
+const clock_service_1 = require("../common/clock.service");
 let AuctionsModule = class AuctionsModule {
 };
 exports.AuctionsModule = AuctionsModule;
@@ -21,8 +22,8 @@ exports.AuctionsModule = AuctionsModule = __decorate([
     (0, common_1.Module)({
         imports: [typeorm_1.TypeOrmModule.forFeature([auction_entity_1.Auction]), audit_module_1.AuditModule, gateway_module_1.GatewayModule],
         controllers: [auctions_controller_1.AuctionsController],
-        providers: [auctions_service_1.AuctionsService],
-        exports: [auctions_service_1.AuctionsService],
+        providers: [auctions_service_1.AuctionsService, clock_service_1.ClockService],
+        exports: [auctions_service_1.AuctionsService, clock_service_1.ClockService],
     })
 ], AuctionsModule);
 //# sourceMappingURL=auctions.module.js.map

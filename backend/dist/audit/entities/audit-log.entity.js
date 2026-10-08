@@ -12,22 +12,21 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuditLog = exports.AuditEventType = void 0;
 const typeorm_1 = require("typeorm");
 const auction_entity_1 = require("../../auctions/entities/auction.entity");
-var AuditEventType;
-(function (AuditEventType) {
-    AuditEventType["AUCTION_CREATED"] = "AUCTION_CREATED";
-    AuditEventType["AUCTION_STARTED"] = "AUCTION_STARTED";
-    AuditEventType["AUCTION_SCHEDULED"] = "AUCTION_SCHEDULED";
-    AuditEventType["AUCTION_CANCELLED"] = "AUCTION_CANCELLED";
-    AuditEventType["AUCTION_EXTENDED"] = "AUCTION_EXTENDED";
-    AuditEventType["AUCTION_ENDED"] = "AUCTION_ENDED";
-    AuditEventType["WINNER_SELECTED"] = "WINNER_SELECTED";
-    AuditEventType["RESERVE_NOT_MET"] = "RESERVE_NOT_MET";
-    AuditEventType["BID_PLACED"] = "BID_PLACED";
-    AuditEventType["BID_REJECTED"] = "BID_REJECTED";
-    AuditEventType["AUTO_BID_PLACED"] = "AUTO_BID_PLACED";
-    AuditEventType["AUTO_BID_CONFIGURED"] = "AUTO_BID_CONFIGURED";
-    AuditEventType["LEADER_CHANGED"] = "LEADER_CHANGED";
-})(AuditEventType || (exports.AuditEventType = AuditEventType = {}));
+exports.AuditEventType = {
+    AUCTION_CREATED: 'AUCTION_CREATED',
+    AUCTION_STARTED: 'AUCTION_STARTED',
+    AUCTION_SCHEDULED: 'AUCTION_SCHEDULED',
+    AUCTION_CANCELLED: 'AUCTION_CANCELLED',
+    AUCTION_EXTENDED: 'AUCTION_EXTENDED',
+    AUCTION_ENDED: 'AUCTION_ENDED',
+    WINNER_SELECTED: 'WINNER_SELECTED',
+    RESERVE_NOT_MET: 'RESERVE_NOT_MET',
+    BID_PLACED: 'BID_PLACED',
+    BID_REJECTED: 'BID_REJECTED',
+    AUTO_BID_PLACED: 'AUTO_BID_PLACED',
+    AUTO_BID_CONFIGURED: 'AUTO_BID_CONFIGURED',
+    LEADER_CHANGED: 'LEADER_CHANGED',
+};
 let AuditLog = class AuditLog {
     id;
     eventType;
@@ -44,7 +43,7 @@ __decorate([
     __metadata("design:type", String)
 ], AuditLog.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ enum: AuditEventType }),
+    (0, typeorm_1.Column)({ type: 'varchar' }),
     __metadata("design:type", String)
 ], AuditLog.prototype, "eventType", void 0);
 __decorate([
