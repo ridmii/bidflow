@@ -15,6 +15,7 @@ export const AuctionStatus = {
   DRAFT: 'DRAFT' as const,
   SCHEDULED: 'SCHEDULED' as const,
   LIVE: 'LIVE' as const,
+  COMPLETING: 'COMPLETING' as const, // ephemeral: claimed by the closing process, replaced before commit
   COMPLETED: 'COMPLETED' as const,
   CANCELLED: 'CANCELLED' as const,
   RESERVE_NOT_MET: 'RESERVE_NOT_MET' as const,

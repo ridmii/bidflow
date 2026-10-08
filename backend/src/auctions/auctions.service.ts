@@ -13,6 +13,7 @@ import { AuditEventType } from '../audit/entities/audit-log.entity';
 import { AuctionGateway } from '../gateway/auction.gateway';
 import { User, UserRole } from '../users/entities/user.entity';
 import { calculateMinimumNextBid } from '../bids/bid-increment.util';
+import { ClockService } from '../common/clock.service';
 
 @Injectable()
 export class AuctionsService {
@@ -21,6 +22,7 @@ export class AuctionsService {
     private dataSource: DataSource,
     private auditService: AuditService,
     private auctionGateway: AuctionGateway,
+    private clock: ClockService,
   ) {}
 
   async create(user: User, dto: CreateAuctionDto): Promise<Auction> {
@@ -163,60 +165,64 @@ export class AuctionsService {
   }
 
   /**
-   * Close an auction — idempotent via isClosing flag + pessimistic lock.
-   * Called by scheduler or can be triggered manually.
+   * Close an auction — race-safe and idempotent.
+   *
+   * Uses an atomic guarded UPDATE:
+   *   UPDATE auctions SET status='CLOSING' WHERE id=? AND status='LIVE' AND end_time <= now()
+   *
+   * Exactly one concurrent caller will see affected rows = 1 and proceed to
+   * determine the winner and write events. All others skip silently.
+   * The broadcast happens after the transaction commits.
    */
   async closeAuction(id: string): Promise<void> {
+    const events: (() => void)[] = [];
+
     await this.dataSource.transaction(async (manager) => {
+      const now = this.clock.now();
+
+      // Atomic claim: only the first caller transitions LIVE -> COMPLETING
+      // end_time check here uses the DB value, so extensions are respected.
+      const claimResult = await manager.query(
+        `UPDATE auctions SET status = 'COMPLETING'
+         WHERE id = $1 AND status = 'LIVE' AND "endTime" <= $2`,
+        [id, now],
+      );
+
+      const affected = claimResult[1] as number; // pg returns [rows, rowCount]
+      if (affected !== 1) return; // Already closed, not yet ended, or doesn't exist
+
+      // Re-read under pessimistic lock to get final consistent state
       const auction = await manager.findOne(Auction, {
         where: { id },
+        lock: { mode: 'pessimistic_write' },
       });
 
       if (!auction) return;
-      if (auction.status !== AuctionStatus.LIVE) return;
-      if (auction.isClosing) return; // Already being closed (idempotency)
 
-      const now = new Date();
-      if (now < auction.endTime) return; // Not yet ended
-
-      // Mark as closing to prevent duplicate processing
-      auction.isClosing = true;
-      await manager.save(auction);
-
-      // Find highest bid
+      // Find winning bid
+      const { Bid } = await import('../bids/entities/bid.entity');
       const highestBid = await manager
-        .createQueryBuilder(
-          require('../bids/entities/bid.entity').Bid,
-          'bid',
-        )
+        .createQueryBuilder(Bid, 'bid')
         .where('bid.auctionId = :id', { id })
         .orderBy('bid.amount', 'DESC')
-        .addOrderBy('bid.placedAt', 'ASC') // Earlier bid wins ties
+        .addOrderBy('bid.placedAt', 'ASC')
         .getOne();
 
       const currentPrice = Number(auction.currentPrice);
-      const reservePrice = auction.reservePrice
-        ? Number(auction.reservePrice)
-        : null;
+      const reservePrice = auction.reservePrice ? Number(auction.reservePrice) : null;
 
       let finalStatus: AuctionStatus;
 
       if (!highestBid) {
-        // No bids at all
         finalStatus = AuctionStatus.RESERVE_NOT_MET;
       } else if (reservePrice && currentPrice < reservePrice) {
-        // Reserve not met
         finalStatus = AuctionStatus.RESERVE_NOT_MET;
         await this.auditService.log({
           eventType: AuditEventType.RESERVE_NOT_MET,
           auctionId: id,
-          metadata: {
-            highestBid: currentPrice,
-            reservePrice,
-          },
-        });
+          metadata: { highestBid: currentPrice, reservePrice },
+        }, manager);
       } else {
-        // We have a winner
         finalStatus = AuctionStatus.COMPLETED;
         auction.winnerId = highestBid.bidderId;
         auction.winnerName = highestBid.bidderName;
@@ -227,15 +233,11 @@ export class AuctionsService {
           auctionId: id,
           actorId: highestBid.bidderId,
           actorName: highestBid.bidderName,
-          metadata: {
-            winnerName: highestBid.bidderName,
-            amount: highestBid.amount,
-          },
-        });
+          metadata: { winnerName: highestBid.bidderName, amount: highestBid.amount },
+        }, manager);
       }
 
       auction.status = finalStatus;
-      auction.isClosing = false;
       await manager.save(auction);
 
       await this.auditService.log({
@@ -246,16 +248,21 @@ export class AuctionsService {
           finalPrice: currentPrice,
           winnerId: auction.winnerId,
         },
-      });
+      }, manager);
 
-      this.auctionGateway.emitAuctionEnded(id, {
-        status: finalStatus,
-        winnerId: auction.winnerId,
-        winnerName: auction.winnerName,
-        winningBidAmount: auction.winningBidAmount,
-        finalPrice: currentPrice,
+      // Defer broadcast until after commit
+      events.push(() => {
+        this.auctionGateway.emitAuctionEnded(id, {
+          status: finalStatus,
+          winnerId: auction.winnerId,
+          winnerName: auction.winnerName,
+          winningBidAmount: auction.winningBidAmount,
+          finalPrice: currentPrice,
+        });
       });
     });
+
+    events.forEach((fn) => fn());
   }
 
   async getAuctionAuditLog(id: string): Promise<any[]> {
