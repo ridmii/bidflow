@@ -153,6 +153,13 @@ export class BidsService {
         );
       }
 
+      if (auction.leadingBidderId === bidder.id) {
+        throw new ConflictException({
+          message: 'You are already the highest bidder. If you want to increase your maximum, use the auto-bid feature instead.',
+          code: 'ALREADY_LEADING',
+        });
+      }
+
       const previousLeader = auction.leadingBidderId;
 
       // Create bid record
