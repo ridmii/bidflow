@@ -17,6 +17,4 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_NAME || 'auction_test_db',
   entities: [Auction, Bid, AutoBid, User, AuditLog],
   synchronize: false,
-  logging: 'all',
-  logger: 'file',
 });

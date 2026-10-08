@@ -12,6 +12,14 @@ import { GatewayModule } from './gateway/gateway.module';
 import { AuctionScheduler } from './scheduler/auction.scheduler';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { AuditModule } from './audit/audit.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+import { Auction } from './auctions/entities/auction.entity';
+import { Bid } from './bids/entities/bid.entity';
+import { AutoBid } from './bids/entities/auto-bid.entity';
+import { User } from './users/entities/user.entity';
+import { AuditLog } from './audit/entities/audit-log.entity';
 
 @Module({
   imports: [
@@ -33,7 +41,7 @@ import { AuditModule } from './audit/audit.module';
           username: config.get<string>('DB_USERNAME'),
           password: config.get<string>('DB_PASSWORD'),
           database: dbName,
-          entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          entities: [Auction, Bid, AutoBid, User, AuditLog],
           synchronize: false, // Migrations only
           logging: process.env.NODE_ENV === 'development',
           extra: {
@@ -53,5 +61,7 @@ import { AuditModule } from './audit/audit.module';
     SchedulerModule,
     AuditModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}

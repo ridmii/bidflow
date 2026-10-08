@@ -82,7 +82,7 @@ describe('BidsService - Bid Validation Logic', () => {
       // Minimum next bid should be 25000 + 500 = 25500
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
           create: vi.fn((Entity, data) => data),
           save: vi.fn((data) => data),
         };
@@ -100,7 +100,7 @@ describe('BidsService - Bid Validation Logic', () => {
       const auction = makeMockAuction({ currentPrice: 25000 });
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
           create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
           save: vi.fn((data) => ({ ...data, placedAt: new Date() })),
           find: vi.fn(() => []),
@@ -122,7 +122,7 @@ describe('BidsService - Bid Validation Logic', () => {
       const auction = makeMockAuction({ status: 'DRAFT' });
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
         };
         return cb(manager);
       });
@@ -140,7 +140,7 @@ describe('BidsService - Bid Validation Logic', () => {
       });
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
         };
         return cb(manager);
       });
@@ -154,18 +154,25 @@ describe('BidsService - Bid Validation Logic', () => {
   });
 
   describe('Idempotency', () => {
-    it('rejects duplicate bid with same idempotencyKey', async () => {
-      mockBidsRepo.findOne = vi.fn().mockResolvedValue({
-        id: 'existing-bid',
-        idempotencyKey: 'key-123',
+    it('returns existing bid for duplicate request with same idempotencyKey', async () => {
+      const auction = makeMockAuction({ currentPrice: 25000 });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn((entity) => {
+            if (entity.name === 'Auction') return auction;
+            return { id: 'existing-bid', idempotencyKey: 'key-123' };
+          }), query: vi.fn(),
+          create: vi.fn((Entity, data) => data),
+          save: vi.fn((data) => data),
+        };
+        return cb(manager);
       });
 
-      await expect(
-        bidsService.placeBid('auction-1', makeMockUser() as any, {
-          amount: 25500,
-          idempotencyKey: 'key-123',
-        }),
-      ).rejects.toThrow(/duplicate/i);
+      const res = await bidsService.placeBid('auction-1', makeMockUser() as any, {
+        amount: 25500,
+        idempotencyKey: 'key-123',
+      });
+      expect(res.id).toBe('existing-bid');
     });
   });
 
@@ -174,7 +181,7 @@ describe('BidsService - Bid Validation Logic', () => {
       const auction = makeMockAuction({ currentPrice: 25000 });
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
           create: vi.fn((Entity, data) => data),
           save: vi.fn(() => {
             throw new Error('Database connection lost');
@@ -229,7 +236,7 @@ describe('BidsService - Bid Validation Logic', () => {
       let savedAuction: any;
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
           create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
           save: vi.fn((data) => {
             savedAuction = data;
@@ -259,7 +266,7 @@ describe('BidsService - Bid Validation Logic', () => {
       let savedAuction: any;
       mockDataSource.transaction = vi.fn(async (cb) => {
         const manager = {
-          findOne: vi.fn().mockResolvedValue(auction),
+          findOne: vi.fn().mockResolvedValue(auction), query: vi.fn(),
           create: vi.fn((Entity, data) => ({ ...data, id: 'bid-1' })),
           save: vi.fn((data) => {
             savedAuction = data;
@@ -276,6 +283,65 @@ describe('BidsService - Bid Validation Logic', () => {
 
       expect(savedAuction.extensionCount).toBe(3); // Unchanged
       expect(mockGateway.emitAuctionExtended).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Step 5 - Self-outbidding prevention', () => {
+    it('rejects a manual bid from the current leader with ALREADY_LEADING code', async () => {
+      const leaderId = 'user-1';
+      const auction = makeMockAuction({
+        currentPrice: 25000,
+        leadingBidderId: leaderId, // user-1 is already the leader
+      });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(auction),
+          query: vi.fn(),
+          create: vi.fn((Entity, data) => data),
+          save: vi.fn((data) => data),
+        };
+        return cb(manager);
+      });
+
+      await expect(
+        bidsService.placeBid('auction-1', makeMockUser(leaderId) as any, {
+          amount: 25500,
+        }),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'ALREADY_LEADING' }),
+      });
+    });
+
+    it('allows setting auto-bid max even when already leader (no error thrown)', async () => {
+      // setAutoBid should allow raising the max without throwing ALREADY_LEADING
+      const leaderId = 'user-1';
+      const auction = makeMockAuction({
+        currentPrice: 25000,
+        leadingBidderId: leaderId,
+        status: 'LIVE',
+      });
+      mockDataSource.transaction = vi.fn(async (cb) => {
+        const manager = {
+          findOne: vi.fn().mockResolvedValue(null), // no existing autoBid
+          query: vi.fn(),
+          create: vi.fn((Entity, data) => ({ ...data, id: 'ab-1' })),
+          save: vi.fn((data) => ({ ...data })),
+          find: vi.fn(() => []),
+        };
+        // First findOne call (auction), second (autoBid) returns null
+        manager.findOne = vi.fn()
+          .mockResolvedValueOnce(auction)
+          .mockResolvedValueOnce(null); // no existing auto-bid
+        return cb(manager);
+      });
+
+      // Should NOT throw
+      const result = await bidsService.setAutoBid(
+        'auction-1',
+        makeMockUser(leaderId) as any,
+        { maxAmount: 30000 },
+      );
+      expect(result.message).toMatch(/configured/i);
     });
   });
 });

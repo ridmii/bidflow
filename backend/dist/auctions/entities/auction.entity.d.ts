@@ -1,0 +1,40 @@
+import { Bid } from '../../bids/entities/bid.entity';
+import { AutoBid } from '../../bids/entities/auto-bid.entity';
+import { AuditLog } from '../../audit/entities/audit-log.entity';
+export declare enum AuctionStatus {
+    DRAFT = "DRAFT",
+    SCHEDULED = "SCHEDULED",
+    LIVE = "LIVE",
+    COMPLETED = "COMPLETED",
+    CANCELLED = "CANCELLED",
+    RESERVE_NOT_MET = "RESERVE_NOT_MET"
+}
+export declare class Auction {
+    id: string;
+    title: string;
+    description: string;
+    startingPrice: number;
+    reservePrice: number;
+    currentPrice: number;
+    startTime: Date;
+    endTime: Date;
+    minimumBidIncrement: number;
+    antiSnipingDuration: number;
+    extensionDuration: number;
+    maxExtensions: number;
+    extensionCount: number;
+    status: AuctionStatus;
+    winnerId: string;
+    winnerName: string;
+    winningBidAmount: number;
+    createdById: string;
+    leadingBidderId: string;
+    leadingBidderName: string;
+    isClosing: boolean;
+    version: number;
+    bids: Bid[];
+    autoBids: AutoBid[];
+    auditLogs: AuditLog[];
+    createdAt: Date;
+    updatedAt: Date;
+}
