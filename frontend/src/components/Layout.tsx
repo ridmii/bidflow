@@ -17,7 +17,7 @@ export default function Layout() {
     <div className="app-container">
       <nav className="navbar">
         <Link to="/" className="navbar-brand">
-          ⚡ BidWave
+          ⚡ BidFlow
         </Link>
 
         {user && (
