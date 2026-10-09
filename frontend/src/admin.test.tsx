@@ -49,7 +49,7 @@ describe('Admin Frontend Visibility', () => {
 
     // Layout should show Admin Dashboard link
     expect(screen.getByRole('link', { name: 'Admin Dashboard' })).toBeInTheDocument();
-    
+
     // AdminDashboard should show Create Auction button
     expect(screen.getByText('+ Create Auction')).toBeInTheDocument();
   });
@@ -74,7 +74,7 @@ describe('Admin Frontend Visibility', () => {
 
     // Layout should NOT show Admin Dashboard link
     expect(screen.queryByText('Admin Dashboard')).not.toBeInTheDocument();
-    
+
     // Bidder accessing /admin should not see Create Auction button (actually AdminDashboard might redirect)
     // In our implementation AdminDashboard redirects to / if not admin
     expect(screen.queryByText('Create Auction')).not.toBeInTheDocument();
