@@ -285,8 +285,6 @@ export class AuctionsService {
     // Fetch aliases to sanitize names/IDs for non-admins
     let aliasMap = new Map<string, string>();
     if (!isAdmin) {
-       const { BidsService } = await import('../bids/bids.service');
-       const { moduleRef } = await import('@nestjs/core');
        // Actually, we can just query the DB directly here to avoid circular dependency
        const bidderOrdering = await this.dataSource.query(
          `SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`,

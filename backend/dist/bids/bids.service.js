@@ -481,7 +481,7 @@ let BidsService = class BidsService {
     }
     async getAliasMap(auctionId, providedManager) {
         const runner = providedManager || this.bidsRepo.manager;
-        const bidderOrdering = await runner.query(`SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`, [auctionId]) || [];
+        const bidderOrdering = await runner.query(`SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`, [auctionId]);
         const map = new Map();
         bidderOrdering.forEach((row, i) => {
             map.set(row.bidderId, `Bidder ${i + 1}`);

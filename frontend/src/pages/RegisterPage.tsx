@@ -5,7 +5,7 @@ import { authApi } from '../api';
 import toast from 'react-hot-toast';
 
 export default function RegisterPage() {
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'bidder' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'BIDDER' });
   const [loading, setLoading] = useState(false);
   const { setAuth } = useAuthStore();
   const navigate = useNavigate();
@@ -86,8 +86,8 @@ export default function RegisterPage() {
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
             >
-              <option value="bidder">Bidder</option>
-              <option value="admin">Administrator</option>
+              <option value="BIDDER">Bidder</option>
+              <option value="ADMIN">Administrator</option>
             </select>
           </div>
 

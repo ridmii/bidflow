@@ -268,8 +268,6 @@ let AuctionsService = class AuctionsService {
         const isAdmin = user?.role === user_entity_1.UserRole.ADMIN;
         let aliasMap = new Map();
         if (!isAdmin) {
-            const { BidsService } = await Promise.resolve().then(() => __importStar(require('../bids/bids.service')));
-            const { moduleRef } = await Promise.resolve().then(() => __importStar(require('@nestjs/core')));
             const bidderOrdering = await this.dataSource.query(`SELECT "bidderId" FROM bids WHERE "auctionId" = $1 GROUP BY "bidderId" ORDER BY MIN("placedAt") ASC`, [id]);
             bidderOrdering.forEach((row, i) => {
                 aliasMap.set(row.bidderId, `Bidder ${i + 1}`);
@@ -318,6 +316,14 @@ let AuctionsService = class AuctionsService {
         }
         if (auction.status === auction_entity_1.AuctionStatus.COMPLETED || auction.status === auction_entity_1.AuctionStatus.RESERVE_NOT_MET) {
             result.reserveMet = auction.status === auction_entity_1.AuctionStatus.COMPLETED && reservePrice != null;
+        }
+        if (!isAdmin) {
+            delete result.leadingBidderName;
+            delete result.leadingBidderId;
+            delete result.winnerName;
+            delete result.winnerId;
+            delete result.isClosing;
+            delete result.createdById;
         }
         return result;
     }
