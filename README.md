@@ -4,8 +4,6 @@ BidFlow is a real-time auction platform where multiple bidders compete in live a
 
 It was built for the Associate Software Engineer technical assignment. The focus is correctness of the auction logic and safe concurrent bidding, rather than the number of screens.
 
-> Items marked **[verify]** are details I could not confirm from the code at the time of writing. Check each one and edit or delete the marker before submitting.
-
 ---
 
 ## Contents
