@@ -17,8 +17,23 @@ export default function AuctionDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [timeState, setTimeState] = useState<any>(null);
   const [extensions, setExtensions] = useState<any[]>([]);
+  const [bidError, setBidError] = useState('');
+  const [autoBidError, setAutoBidError] = useState('');
   const { user } = useAuthStore();
   const socketRef = useRef<any>(null);
+  const bidAttemptRef = useRef<{ amount: number; idempotencyKey: string } | null>(null);
+
+  const getBidErrorMessage = (error: any, action: 'bid' | 'auto-bid') => {
+    const status = error.response?.status;
+    const responseMessage = error.response?.data?.message;
+    if (status === 401) return 'You are not logged in. Please sign in to place a bid.';
+    if (typeof responseMessage === 'string') return responseMessage;
+    if (Array.isArray(responseMessage)) return responseMessage.join(', ');
+    if (error.response?.data?.code === 'ALREADY_LEADING') {
+      return 'You are already the leading bidder.';
+    }
+    return action === 'bid' ? 'Failed to place bid. Please try again.' : 'Failed to set auto-bid. Please try again.';
+  };
 
   const loadData = async () => {
     try {
@@ -100,24 +115,54 @@ export default function AuctionDetailsPage() {
 
   const handlePlaceBid = async (e: React.FormEvent) => {
     e.preventDefault();
+    setBidError('');
+    const amount = Number(bidAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setBidError('Enter a valid positive bid amount.');
+      return;
+    }
+    if (!user) {
+      setBidError('You are not logged in. Please sign in to place a bid.');
+      return;
+    }
+    if (!bidAttemptRef.current || bidAttemptRef.current.amount !== amount) {
+      bidAttemptRef.current = { amount, idempotencyKey: crypto.randomUUID() };
+    }
+
     try {
-      await bidsApi.place(id!, { amount: Number(bidAmount) });
+      await bidsApi.place(id!, { amount }, bidAttemptRef.current.idempotencyKey);
+      bidAttemptRef.current = null;
       toast.success('Bid placed successfully!');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to place bid');
+    } catch (error: any) {
+      const message = getBidErrorMessage(error, 'bid');
+      setBidError(message);
+      toast.error(message);
     }
   };
 
   const handleSetAutoBid = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAutoBidError('');
+    const maxAmount = Number(autoBidAmount);
+    if (!Number.isFinite(maxAmount) || maxAmount <= 0) {
+      setAutoBidError('Enter a valid positive maximum amount.');
+      return;
+    }
+    if (!user) {
+      setAutoBidError('You are not logged in. Please sign in to configure auto-bidding.');
+      return;
+    }
+
     try {
-      await bidsApi.setAutoBid(id!, { maxAmount: Number(autoBidAmount) });
+      await bidsApi.setAutoBid(id!, { maxAmount });
       toast.success('Auto-bid configured successfully!');
       const res = await bidsApi.getMyAutoBid(id!);
       setMyAutoBid(res.data);
       setAutoBidAmount('');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to set auto-bid');
+    } catch (error: any) {
+      const message = getBidErrorMessage(error, 'auto-bid');
+      setAutoBidError(message);
+      toast.error(message);
     }
   };
 
@@ -195,7 +240,10 @@ export default function AuctionDetailsPage() {
                           type="number"
                           className="form-control"
                           value={bidAmount}
-                          onChange={e => setBidAmount(e.target.value)}
+                          onChange={e => {
+                            setBidAmount(e.target.value);
+                            setBidError('');
+                          }}
                           min={minBidInfo?.minimumNextBid}
                           step={minBidInfo?.minimumIncrement}
                           required
@@ -206,6 +254,7 @@ export default function AuctionDetailsPage() {
                       </div>
                       <button type="submit" className="btn btn-primary btn-lg">Bid Now</button>
                     </div>
+                    {bidError && <p className="form-error" role="alert">{bidError}</p>}
                   </form>
                 </div>
 
@@ -224,7 +273,10 @@ export default function AuctionDetailsPage() {
                         type="number"
                         className="form-control"
                         value={autoBidAmount}
-                        onChange={e => setAutoBidAmount(e.target.value)}
+                        onChange={e => {
+                          setAutoBidAmount(e.target.value);
+                          setAutoBidError('');
+                        }}
                         placeholder="Your max limit..."
                         required
                         min={Number(auction.currentPrice) + 1}
@@ -234,6 +286,7 @@ export default function AuctionDetailsPage() {
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
                       We'll bid just enough to keep you in the lead, up to this amount.
                     </div>
+                    {autoBidError && <p className="form-error" role="alert">{autoBidError}</p>}
                   </form>
                 </div>
               </div>

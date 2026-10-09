@@ -1,6 +1,16 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    skipAuthRedirect?: boolean;
+  }
+
+  interface InternalAxiosRequestConfig {
+    skipAuthRedirect?: boolean;
+  }
+}
+
 const api = axios.create({
   baseURL: 'http://localhost:3000/api',
   headers: { 'Content-Type': 'application/json' },
@@ -17,7 +27,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.skipAuthRedirect) {
       useAuthStore.getState().logout();
       window.location.href = '/login';
     }
@@ -48,9 +58,13 @@ export const auctionsApi = {
 
 // Bids
 export const bidsApi = {
-  place: (auctionId: string, data: any) => api.post(`/auctions/${auctionId}/bids`, data),
+  place: (auctionId: string, data: any, idempotencyKey: string) =>
+    api.post(`/auctions/${auctionId}/bids`, data, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      skipAuthRedirect: true,
+    }),
   history: (auctionId: string) => api.get(`/auctions/${auctionId}/bids`),
-  setAutoBid: (auctionId: string, data: any) => api.post(`/auctions/${auctionId}/bids/auto`, data),
+  setAutoBid: (auctionId: string, data: any) =>
+    api.post(`/auctions/${auctionId}/bids/auto`, data, { skipAuthRedirect: true }),
   getMyAutoBid: (auctionId: string) => api.get(`/auctions/${auctionId}/bids/auto/me`),
 };
-
