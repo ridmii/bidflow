@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow, differenceInSeconds } from 'date-fns';
+import { format, differenceInSeconds } from 'date-fns';
 
 export function formatCurrency(amount: number | string): string {
   const num = typeof amount === 'string' ? parseFloat(amount) : amount;

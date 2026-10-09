@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import type { ReactElement } from 'react';
 import { useAuthStore } from './store/authStore';
 import { Toaster } from 'react-hot-toast';
 
@@ -9,7 +10,7 @@ import AuctionListPage from './pages/AuctionListPage';
 import AuctionDetailsPage from './pages/AuctionDetailsPage';
 import AdminDashboard from './pages/AdminDashboard';
 
-function ProtectedRoute({ children }: { children: JSX.Element }) {
+function ProtectedRoute({ children }: { children: ReactElement }) {
   const { token } = useAuthStore();
   if (!token) return <Navigate to="/login" replace />;
   return children;
