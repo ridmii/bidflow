@@ -68,7 +68,6 @@ export class AuctionScheduler {
       where: {
         status: AuctionStatus.LIVE,
         endTime: LessThanOrEqual(now),
-        isClosing: false,
       },
     });
 

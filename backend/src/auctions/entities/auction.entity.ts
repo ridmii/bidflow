@@ -84,9 +84,6 @@ export class Auction {
   @Column({ nullable: true })
   leadingBidderName: string;
 
-  @Column({ default: false })
-  isClosing: boolean;
-
   @VersionColumn()
   version: number;
 

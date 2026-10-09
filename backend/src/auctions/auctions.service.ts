@@ -355,7 +355,6 @@ export class AuctionsService {
       delete result.leadingBidderId;
       delete result.winnerName;
       delete result.winnerId;
-      delete result.isClosing;
       delete result.createdById;
     }
     

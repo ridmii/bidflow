@@ -98,7 +98,7 @@ erDiagram
 
 ### 4. Auction Closing / Scheduler
 - **Cron Jobs**: A background scheduler (`@nestjs/schedule`) polls the database every 15-30 seconds to transition `SCHEDULED -> LIVE` and `LIVE -> COMPLETED`.
-- **Idempotent Closing**: The `closeAuction` method uses a locking mechanism and an `isClosing` flag to ensure that even if the scheduler runs concurrently with a manual trigger, the auction is only closed and evaluated once.
+- **Idempotent Closing**: The `closeAuction` method atomically transitions the auction status so concurrent scheduler and manual triggers only close and evaluate it once.
 
 ## Setup Instructions
 
