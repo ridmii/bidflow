@@ -113,6 +113,40 @@ describe('AuctionsController - Role enforcement', () => {
     expect(res.status).toBe(403);
   });
 
+  it('DELETE /auctions/:id — no token returns 401', async () => {
+    const res = await request(app.getHttpServer())
+      .delete('/auctions/' + auctionId);
+    expect(res.status).toBe(401);
+  });
+
+  it('DELETE /auctions/:id — bidder token returns 403', async () => {
+    const res = await request(app.getHttpServer())
+      .delete('/auctions/' + auctionId)
+      .set('Authorization', 'Bearer ' + bidderToken());
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /auctions — bidder cannot list DRAFT auctions, including with a DRAFT filter', async () => {
+    const allAuctions = await request(app.getHttpServer())
+      .get('/auctions')
+      .set('Authorization', 'Bearer ' + bidderToken());
+    expect(allAuctions.status).toBe(200);
+    expect(allAuctions.body).toHaveLength(0);
+
+    const drafts = await request(app.getHttpServer())
+      .get('/auctions?status=DRAFT')
+      .set('Authorization', 'Bearer ' + bidderToken());
+    expect(drafts.status).toBe(200);
+    expect(drafts.body).toHaveLength(0);
+  });
+
+  it('GET /auctions/:id — bidder cannot fetch a DRAFT auction', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/auctions/' + auctionId)
+      .set('Authorization', 'Bearer ' + bidderToken());
+    expect(res.status).toBe(404);
+  });
+
   it('POST /auctions — admin token creates auction (smoke test)', async () => {
     const res = await request(app.getHttpServer())
       .post('/auctions')

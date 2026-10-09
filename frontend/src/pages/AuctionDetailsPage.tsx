@@ -263,8 +263,7 @@ export default function AuctionDetailsPage() {
                   <h3 style={{ marginBottom: '1rem', color: 'var(--text-primary)' }}>Configure Auto-Bid</h3>
                   {myAutoBid && myAutoBid.isActive && (
                      <div className="alert alert-info">
-                       <strong>Auto-Bid Active</strong><br/>
-                       Your max bid: {formatCurrency(myAutoBid.maxAmount)}
+                       <strong>Auto-Bid Active</strong>
                      </div>
                   )}
                   <form onSubmit={handleSetAutoBid}>

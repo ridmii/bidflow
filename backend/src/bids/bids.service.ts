@@ -593,7 +593,6 @@ export class BidsService {
     if (!autoBid) return null;
     return {
       id: autoBid.id,
-      maxAmount: autoBid.maxAmount, // Only visible to owner
       isActive: autoBid.isActive,
       auctionId: autoBid.auctionId,
     };

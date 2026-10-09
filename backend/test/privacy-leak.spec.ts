@@ -6,6 +6,10 @@ import { JwtService } from '@nestjs/jwt';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { once } from 'node:events';
+import { io, Socket } from 'socket.io-client';
+import { AuctionsService } from '../src/auctions/auctions.service';
+import { BidsService } from '../src/bids/bids.service';
 
 /**
  * Privacy leak test:
@@ -70,6 +74,14 @@ describe('Privacy - no sensitive data leaks to bidders', () => {
     await autoBidRepo.save({
       maxAmount: 7777, isActive: true, auctionId, bidderId: BIDDER_UUID,
     });
+
+    await dataSource.getRepository('AuditLog').save({
+      eventType: 'RESERVE_NOT_MET',
+      auctionId,
+      actorId: BIDDER_UUID,
+      actorName: 'Real Bidder Name',
+      metadata: { reservePrice: 9999 },
+    });
   });
 
   const FORBIDDEN_PATTERNS = [
@@ -81,8 +93,10 @@ describe('Privacy - no sensitive data leaks to bidders', () => {
     /9999/,            // the reserve price value
     /Real Seller Name/,
     /Real Bidder Name/,
+    /Socket Real Bidder/,
     /priv-seller@test\.com/,
     /priv-bidder@test\.com/,
+    /socket-priv-bidder@test\.com/,
   ];
 
   function assertNoLeak(body: any) {
@@ -117,6 +131,110 @@ describe('Privacy - no sensitive data leaks to bidders', () => {
     // Aliases should be present
     expect(JSON.stringify(res.body)).toMatch(/Bidder \d/);
   });
+
+  it('GET /auctions/:id/audit — bidder does not see private metadata or identities', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/auctions/' + auctionId + '/audit')
+      .set('Authorization', 'Bearer ' + BIDDER_TOKEN_FN());
+    expect(res.status).toBe(200);
+    assertNoLeak(res.body);
+  });
+
+  it('GET /auctions/:id/minimum-bid — public response contains no private data', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/auctions/' + auctionId + '/minimum-bid');
+    expect(res.status).toBe(200);
+    assertNoLeak(res.body);
+  });
+
+  it('GET /auctions/:id/bids/auto/me — does not expose any bidder maximum', async () => {
+    const otherId = 'c0000000-0000-0000-0000-000000000003';
+    await dataSource.getRepository('User').save({
+      id: otherId,
+      email: 'other-priv-bidder@test.com',
+      name: 'Other Real Bidder',
+      password: 'hash',
+      role: 'BIDDER',
+    });
+    await dataSource.getRepository('AutoBid').save({
+      maxAmount: 8888,
+      isActive: true,
+      auctionId,
+      bidderId: otherId,
+    });
+
+    const res = await request(app.getHttpServer())
+      .get('/auctions/' + auctionId + '/bids/auto/me')
+      .set('Authorization', 'Bearer ' + BIDDER_TOKEN_FN());
+    expect(res.status).toBe(200);
+    assertNoLeak(res.body);
+    expect(JSON.stringify(res.body)).not.toContain('8888');
+    expect(JSON.stringify(res.body)).not.toContain('Other Real Bidder');
+    expect(JSON.stringify(res.body)).not.toContain('other-priv-bidder@test.com');
+  });
+
+  it('bid and auction-ended socket payloads contain aliases, not private values or identities', async () => {
+    const secondBidderId = 'c0000000-0000-0000-0000-000000000004';
+    const secondBidder = await dataSource.getRepository('User').save({
+      id: secondBidderId,
+      email: 'socket-priv-bidder@test.com',
+      name: 'Socket Real Bidder',
+      password: 'hash',
+      role: 'BIDDER',
+    });
+    await app.listen(0);
+    const address = app.getHttpServer().address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected the auction test server to have a TCP address');
+    }
+    const socket: Socket = io(`http://127.0.0.1:${address.port}/auction`, {
+      transports: ['websocket'],
+    });
+    const withTimeout = <T>(
+      promise: Promise<T>,
+      eventName: string,
+      timeoutMs = 3000,
+    ) =>
+      new Promise<T>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error(`Socket ${eventName} timed out`)),
+          timeoutMs,
+        );
+        promise.then(
+          (value) => {
+            clearTimeout(timeout);
+            resolve(value);
+          },
+          (error) => {
+            clearTimeout(timeout);
+            reject(error);
+          },
+        );
+      });
+
+    try {
+      await withTimeout(once(socket, 'connect'), 'connect', 5000);
+      socket.emit('join-auction', { auctionId });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      const bidEvent = once(socket, 'bid-placed').then(([payload]) => payload);
+      await app.get(BidsService).placeBid(auctionId, secondBidder, {
+        amount: 2000,
+        idempotencyKey: 'socket-privacy-bid',
+      });
+      assertNoLeak(await withTimeout(bidEvent, 'bid-placed'));
+
+      await dataSource.getRepository('Auction').update(auctionId, {
+        reservePrice: 1000,
+        endTime: new Date(Date.now() - 1000),
+      });
+      const endedEvent = once(socket, 'auction-ended').then(([payload]) => payload);
+      await app.get(AuctionsService).closeAuction(auctionId);
+      assertNoLeak(await withTimeout(endedEvent, 'auction-ended'));
+    } finally {
+      socket.disconnect();
+    }
+  }, 15000);
 
   it('GET /auctions/:id — admin still sees reservePrice', async () => {
     const res = await request(app.getHttpServer())

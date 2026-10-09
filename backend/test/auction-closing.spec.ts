@@ -147,9 +147,12 @@ describe('Auction Closing', () => {
 
     const closed = await auctionRepo.findOneBy({ id: auction.id });
     expect(closed?.status).toBe(AuctionStatus.COMPLETED);
+    expect(closed?.winnerId).toBe(BIDDER_ID);
 
     const endedLogs = await auditRepo.findBy({ auctionId: auction.id, eventType: AuditEventType.AUCTION_ENDED });
+    const winnerLogs = await auditRepo.findBy({ auctionId: auction.id, eventType: AuditEventType.WINNER_SELECTED });
     expect(endedLogs).toHaveLength(1);
+    expect(winnerLogs).toHaveLength(1);
   });
 
   it('3a. Reserve not met -> RESERVE_NOT_MET, no winner', async () => {

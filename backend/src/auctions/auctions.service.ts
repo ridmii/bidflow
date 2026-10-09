@@ -88,6 +88,15 @@ export class AuctionsService {
       query.where('auction.status = :status', { status });
     }
 
+    if (user?.role !== UserRole.ADMIN) {
+      const draftStatus = AuctionStatus.DRAFT;
+      if (status) {
+        query.andWhere('auction.status != :draftStatus', { draftStatus });
+      } else {
+        query.where('auction.status != :draftStatus', { draftStatus });
+      }
+    }
+
     query.orderBy('auction.startTime', 'DESC');
     const auctions = await query.getMany();
 
@@ -97,6 +106,9 @@ export class AuctionsService {
   async findOne(id: string, user?: User): Promise<any> {
     const auction = await this.auctionsRepo.findOne({ where: { id } });
     if (!auction) throw new NotFoundException('Auction not found');
+    if (auction.status === AuctionStatus.DRAFT && user?.role !== UserRole.ADMIN) {
+      throw new NotFoundException('Auction not found');
+    }
     return this.sanitizeAuction(auction, user);
   }
 
@@ -385,8 +397,8 @@ export class AuctionsService {
   }
 
   async deleteAuction(id: string, user: User) {
-    if ((user as any).role !== 'ADMIN') {
-      throw new NotFoundException('Only admins can delete auctions');
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only admins can delete auctions');
     }
     const auction = await this.auctionsRepo.findOne({ where: { id } });
     if (!auction) {

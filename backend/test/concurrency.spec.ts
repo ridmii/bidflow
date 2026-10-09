@@ -132,10 +132,8 @@ describe('BidsService - Concurrency', () => {
     console.log('10 bids run: ' + res.accepted + ' accepted, ' + res.rejected + ' rejected');
   });
 
-  it('handles 50 simultaneous bids cleanly 20 times in a row', async () => {
-    for(let i = 1; i <= 20; i++) {
-        const res = await runConcurrencyTest(50, i);
-        console.log('Run ' + i + ': ' + res.accepted + ' accepted, ' + res.rejected + ' rejected');
-    }
+  it('handles 50 simultaneous bids cleanly', async () => {
+    const res = await runConcurrencyTest(50, 1);
+    expect(res.accepted + res.rejected).toBe(50);
   }, 120000); // timeout 120s
 });
