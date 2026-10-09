@@ -360,7 +360,7 @@ export class AuctionsService {
   async getMinimumNextBid(id: string): Promise<any> {
     const auction = await this.auctionsRepo.findOne({ where: { id } });
     if (!auction) throw new NotFoundException('Auction not found');
-    const minimumBid = calculateMinimumNextBid(Number(auction.currentPrice));
+    const minimumBid = calculateMinimumNextBid(Number(auction.currentPrice), auction.incrementTiers);
     return {
       currentPrice: auction.currentPrice,
       minimumNextBid: minimumBid,
@@ -411,8 +411,4 @@ export class AuctionsService {
     return { success: true };
   }
 }
-
-
-
-
 

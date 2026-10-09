@@ -135,7 +135,7 @@ export class BidsService {
       }
 
       // Re-validate minimum increment with locked current price
-      const minimumBid = calculateMinimumNextBid(Number(auction.currentPrice));
+      const minimumBid = calculateMinimumNextBid(Number(auction.currentPrice), auction.incrementTiers);
       if (dto.amount < minimumBid) {
         await this.auditService.log({
           eventType: AuditEventType.BID_REJECTED,
@@ -387,7 +387,7 @@ export class BidsService {
       let newPrice = currentPrice;
       if (winner.maxAmount > challenger.maxAmount) {
          // maxC < maxL: leader stays, price = min(maxL, maxC + incAt(maxC))
-         const challengerInc = calculateMinimumIncrement(challenger.maxAmount);
+         const challengerInc = calculateMinimumIncrement(challenger.maxAmount, auction.incrementTiers);
          const competitorMinRequired = challenger.maxAmount + challengerInc;
          newPrice = Math.min(winner.maxAmount, competitorMinRequired);
       } else {
@@ -499,7 +499,7 @@ export class BidsService {
       }
 
       const currentPrice = Number(auction.currentPrice);
-      const minNext = currentPrice + calculateMinimumIncrement(currentPrice);
+      const minNext = currentPrice + calculateMinimumIncrement(currentPrice, auction.incrementTiers);
       if (dto.maxAmount < minNext) {
         throw new BadRequestException(
           `Auto-bid maximum (Rs. ${dto.maxAmount}) must be at least the minimum next bid (Rs. ${minNext})`,
