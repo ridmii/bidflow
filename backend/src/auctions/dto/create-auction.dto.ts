@@ -1,13 +1,31 @@
 import {
   IsString,
+  IsNotEmpty,
   IsNumber,
   IsPositive,
   IsDateString,
   IsOptional,
   IsEnum,
+  IsInt,
+  Matches,
   Min,
+  ValidateNested,
+  IsArray,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { AuctionStatus } from '../entities/auction.entity';
+
+export class IncrementTierDto {
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxPrice: number | null;
+
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  increment: number;
+}
 
 export class CreateAuctionDto {
   @IsOptional()
@@ -15,17 +33,23 @@ export class CreateAuctionDto {
   status?: AuctionStatus;
 
   @IsString()
+  @IsNotEmpty()
+  @Matches(/\S/)
   title: string;
 
   @IsString()
+  @IsNotEmpty()
+  @Matches(/\S/)
   description: string;
 
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
   @IsPositive()
   startingPrice: number;
 
   @IsOptional()
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
   @IsPositive()
   reservePrice?: number;
 
@@ -36,24 +60,34 @@ export class CreateAuctionDto {
   endTime: string;
 
   @IsOptional()
-  @IsNumber()
-  @Min(1)
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
   minimumBidIncrement?: number;
 
   @IsOptional()
-  @IsNumber()
-  @Min(0)
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
   antiSnipingDuration?: number;
 
   @IsOptional()
-  @IsNumber()
-  @Min(0)
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
   extensionDuration?: number;
 
   @IsOptional()
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
   @Min(0)
   maxExtensions?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => IncrementTierDto)
+  incrementTiers?: IncrementTierDto[];
 }
 
 export class UpdateAuctionDto {
@@ -76,5 +110,41 @@ export class UpdateAuctionDto {
   @IsOptional()
   @IsEnum(AuctionStatus)
   status?: AuctionStatus;
-}
 
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  startingPrice?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  reservePrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  minimumBidIncrement?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => IncrementTierDto)
+  incrementTiers?: IncrementTierDto[];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  antiSnipingDuration?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  extensionDuration?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxExtensions?: number;
+}

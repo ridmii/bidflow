@@ -34,11 +34,21 @@ export class AuctionsService {
     const endTime = new Date(dto.endTime);
 
     if (startTime >= endTime) {
-      throw new BadRequestException('End time must be after start time');
+      throw new BadRequestException({
+        message: 'Validation failed',
+        errors: { endTime: 'End time must be after start time' },
+      });
+    }
+
+    if (dto.reservePrice !== undefined && dto.reservePrice < dto.startingPrice) {
+      throw new BadRequestException({
+        message: 'Validation failed',
+        errors: { reservePrice: 'Reserve price must be at least the starting price' },
+      });
     }
 
     const now = new Date();
-    const status =
+    const defaultStatus =
       startTime <= now ? AuctionStatus.SCHEDULED : AuctionStatus.DRAFT;
 
     const auction = this.auctionsRepo.create({
@@ -49,11 +59,12 @@ export class AuctionsService {
       currentPrice: dto.startingPrice,
       startTime,
       endTime,
-      minimumBidIncrement: dto.minimumBidIncrement || 500,
+      minimumBidIncrement: dto.minimumBidIncrement ?? 500,
       antiSnipingDuration: dto.antiSnipingDuration ?? 120,
       extensionDuration: dto.extensionDuration ?? 120,
       maxExtensions: dto.maxExtensions ?? 3,
-      status: dto.status || (startTime <= now ? AuctionStatus.SCHEDULED : AuctionStatus.DRAFT),
+      incrementTiers: dto.incrementTiers,
+      status: dto.status ?? defaultStatus,
       createdById: user.id,
     });
 
@@ -102,6 +113,18 @@ export class AuctionsService {
       auction.status === AuctionStatus.COMPLETED
     ) {
       throw new BadRequestException('Cannot edit a live or completed auction');
+    }
+
+    const newStartTime = dto.startTime ? new Date(dto.startTime) : auction.startTime;
+    const newEndTime = dto.endTime ? new Date(dto.endTime) : auction.endTime;
+    if (newStartTime >= newEndTime) {
+      throw new BadRequestException('End time must be after start time');
+    }
+
+    const newStartingPrice = dto.startingPrice ?? auction.startingPrice;
+    const newReservePrice = dto.reservePrice !== undefined ? dto.reservePrice : auction.reservePrice;
+    if (newReservePrice !== undefined && newReservePrice !== null && newReservePrice < newStartingPrice) {
+      throw new BadRequestException('Reserve price cannot be less than starting price');
     }
 
     Object.assign(auction, dto);

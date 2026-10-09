@@ -63,6 +63,9 @@ export class Auction {
   @Column({ default: 0 })
   extensionCount: number;
 
+  @Column({ type: 'jsonb', nullable: true })
+  incrementTiers: any;
+
   @Column({ type: 'varchar', default: AuctionStatus.DRAFT })
   status: AuctionStatus;
 

@@ -5,7 +5,7 @@ interface User {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'bidder';
+  role: string;
 }
 
 interface AuthState {
@@ -23,7 +23,7 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       setAuth: (user, token) => set({ user, token }),
       logout: () => set({ user: null, token: null }),
-      isAdmin: () => get().user?.role === 'admin',
+      isAdmin: () => get().user?.role.toUpperCase() === 'ADMIN',
     }),
     { name: 'auction-auth' }
   )
