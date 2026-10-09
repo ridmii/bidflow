@@ -10,3 +10,6 @@ coverage/
 .env.*
 !.env.example
 !.env.test.example
+
+*.sqlite
+*.log
